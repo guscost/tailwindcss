@@ -1,0 +1,265 @@
+use crate::cursor;
+use crate::extractor::machine::{Machine, MachineState};
+use crate::extractor::utility_machine::UtilityMachine;
+use crate::extractor::variant_machine::VariantMachine;
+
+#[derive(Debug, Default)]
+pub(crate) struct CandidateMachine {
+    /// Start position of the candidate
+    start_pos: usize,
+
+    /// End position of the last variant
+    last_variant_end_pos: Option<usize>,
+
+    /// Ignore the characters until this specific position
+    skip_until_pos: Option<usize>,
+
+    /// Current state of the machine
+    state: State,
+
+    utility_machine: UtilityMachine,
+    variant_machine: VariantMachine,
+}
+
+#[derive(Debug, Default)]
+enum State {
+    #[default]
+    Idle,
+
+    /// Parsing a candidate
+    Parsing,
+
+    /// Wait until we're at a valid boundary for new candidates.
+    ResumeAtBoundary,
+}
+
+impl Machine for CandidateMachine {
+    fn next(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
+        // Skipping characters until a specific position
+        match self.skip_until_pos {
+            Some(skip_until) if cursor.pos < skip_until => return MachineState::Parsing,
+            Some(_) => self.skip_until_pos = None,
+            None => {}
+        }
+
+        match self.state {
+            State::Idle => match (cursor.curr, cursor.next) {
+                // Candidates don't start with `--`, skip ahead
+                //
+                // E.g.: `--my-color`
+                //        ^^
+                (b'-', b'-') => self.resume_at_boundary(),
+
+                // Candidates don't start with `<`, skip ahead
+                //
+                // E.g.: `<div`
+                //        ^
+                (b'<', _) => self.resume_at_boundary(),
+
+                // Candidates don't start with `/`, skip ahead
+                //
+                // E.g.: `</div`
+                //         ^
+                (b'/', _) => self.resume_at_boundary(),
+
+                // Anything else is probably valid
+                _ => {
+                    let variant_machine_state = self.variant_machine.next(cursor);
+                    let utility_machine_state = self.utility_machine.next(cursor);
+
+                    match (variant_machine_state, utility_machine_state) {
+                        // Completed with a single character utility
+                        (_, state @ MachineState::Done(_)) => state,
+
+                        // At least one machine is parsing
+                        (MachineState::Parsing, _) | (_, MachineState::Parsing) => {
+                            self.start_parsing(cursor.pos)
+                        }
+
+                        // None of the machines are parsing
+                        _ => MachineState::Idle,
+                    }
+                }
+            },
+
+            State::Parsing => {
+                let variant_machine_state = self.variant_machine.next(cursor);
+                let utility_machine_state = self.utility_machine.next(cursor);
+
+                match (variant_machine_state, utility_machine_state) {
+                    // Both machines are idle, continue at the next valid candidate boundary
+                    (MachineState::Idle, MachineState::Idle) => self.resume_at_boundary(),
+
+                    // Both machines are still parsing, keep parsing
+                    (MachineState::Parsing, MachineState::Parsing) => MachineState::Parsing,
+
+                    // Variant machine is done, track the current variant and re-start both
+                    // machines to track the next variant (or utility).
+                    //
+                    // Utilities never end in `:`, variants _have_ to end in `:`. The state of the
+                    // utility machine should not matter in this case.
+                    (MachineState::Done(span), _) => {
+                        if let Some(end_pos) = self.last_variant_end_pos {
+                            dbg!(end_pos, span);
+                        }
+
+                        self.last_variant_end_pos = Some(cursor.pos);
+                        self.variant_machine.reset();
+                        self.utility_machine.reset();
+                        MachineState::Parsing
+                    }
+
+                    // Utility machine is done, but if the next character is a `:`, then it's
+                    // probably a variant instead. Restart the utility machine.
+                    (_, MachineState::Done(_)) if cursor.next == b':' => {
+                        self.utility_machine.restart();
+                        MachineState::Parsing
+                    }
+
+                    // Variant machine is done (but it's guaranteed to not be a variant), as long
+                    // as the utility machine is still parsing, we're good.
+                    (MachineState::Idle, MachineState::Parsing) => MachineState::Parsing,
+
+                    // Variant machine is still parsing, but the utility machine is done (and
+                    // guaranteed to not be a utility). Keep parsing the variant.
+                    (MachineState::Parsing, MachineState::Idle) => MachineState::Parsing,
+
+                    // Utility machine is done, and it's not going to be a variant. Candidate
+                    // cannot be followed by any of these characters:
+                    //
+                    // E.g.:
+                    //
+                    // ```
+                    // flex/
+                    //     ^
+                    // flex!!
+                    //      ^
+                    // flex=
+                    //     ^
+                    //  …
+                    // ```
+                    (_, MachineState::Done(_))
+                        if matches!(
+                            cursor.next,
+                            b'/' | b'!' | b'=' | b'#' | b'-' | b'[' | b'('
+                        ) =>
+                    {
+                        self.resume_at_boundary()
+                    }
+
+                    // Utility machine is done, and it's not going to be a variant. Candidate is
+                    // guaranteed to not be followed by disallowed characters:
+                    (MachineState::Idle, state @ MachineState::Done(span)) => {
+                        if let Some(end_pos) = self.last_variant_end_pos {
+                            if end_pos + 1 > span.start {
+                                state
+                            } else {
+                                self.done(self.start_pos, cursor)
+                            }
+                        } else {
+                            state
+                        }
+                    }
+
+                    // Anything else is probably valid
+                    _ => MachineState::Parsing,
+                }
+            }
+
+            State::ResumeAtBoundary => {
+                // Only interested in new candidates if we're at a valid boundary for new
+                // candidates.
+                //
+                // E.g.: `foo bar`
+                //           ^
+                // E.g.: `class=flex`
+                //             ^
+                if self.is_boundary_character(cursor.curr) {
+                    self.reset();
+                }
+
+                MachineState::Idle
+            }
+        }
+    }
+}
+
+impl CandidateMachine {
+    #[inline(always)]
+    fn start_parsing(&mut self, start_pos: usize) -> MachineState {
+        self.start_pos = start_pos;
+        self.state = State::Parsing;
+        MachineState::Parsing
+    }
+
+    #[inline(always)]
+    fn resume_at_boundary(&mut self) -> MachineState {
+        self.reset();
+        self.state = State::ResumeAtBoundary;
+        MachineState::Idle
+    }
+
+    #[inline(always)]
+    fn is_boundary_character(&self, c: u8) -> bool {
+        c.is_ascii_whitespace() || matches!(c, b'"' | b'\'' | b'`' | b'=')
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CandidateMachine;
+    use crate::cursor::Cursor;
+    use crate::extractor::machine::{Machine, MachineState};
+
+    #[test]
+    fn test_candidate_extraction() {
+        for (input, expected) in [
+            // Simple utility
+              ("flex", vec!["flex"]),
+              // Single character utility
+              ("a", vec!["a"]),
+              // Simple variant with simple utility
+              ("hover:flex", vec!["hover:flex"]),
+              // Multiple utilities
+              ("flex block", vec!["flex", "block"]),
+              ("mx-auto flex size-7 var(--my-variable) bg-red-500/(--my-opacity) items-center justify-center rounded-full ", vec![ "mx-auto", "flex", "size-7", "bg-red-500/(--my-opacity)", "items-center", "justify-center", "rounded-full"]),
+              // Simple utility with dashes
+              ("items-center", vec!["items-center"]),
+              // Simple utility with numbers
+              ("px-2.5", vec!["px-2.5"]),
+              // Arbitrary properties
+              ("[color:red]", vec!["[color:red]"]),
+              ("![color:red]", vec!["![color:red]"]),
+              ("[color:red]!", vec!["[color:red]!"]),
+              ("[color:red]/20", vec!["[color:red]/20"]),
+              ("![color:red]/20", vec!["![color:red]/20"]),
+              ("[color:red]/20!", vec!["[color:red]/20!"]),
+              // In HTML
+              (
+                  r#"<div class="flex items-center px-2.5 bg-[#0088cc] text-(--my-color)"></div>"#,
+                  vec![
+                      "flex",
+                      "items-center",
+                      "px-2.5",
+                      "bg-[#0088cc]",
+                      "text-(--my-color)",
+                  ],
+              ),
+        ] {
+            let mut machine = CandidateMachine::default();
+            let mut cursor = Cursor::new(input.as_bytes());
+
+            let mut actual: Vec<&str> = vec![];
+
+            for i in 0..input.len() {
+                cursor.move_to(i);
+
+                if let MachineState::Done(span) = machine.next(&cursor) {
+                    actual.push(unsafe { std::str::from_utf8_unchecked(span.slice(cursor.input)) });
+                }
+            }
+
+            assert_eq!(actual, expected);
+        }
+    }
+}

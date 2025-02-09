@@ -312,6 +312,8 @@ export async function handle(args: Result<ReturnType<typeof options>>) {
   DEBUG && I.start('Scan for candidates')
   let candidates = scanner.scan()
   DEBUG && I.end('Scan for candidates')
+  require('fs').writeFileSync('candidates.json', JSON.stringify(candidates, null, 2))
+  DEBUG && I.hit(`Candidates: ${candidates.length}`)
   DEBUG && I.start('Build CSS')
   let output = await handleError(() => compiler.build(candidates))
   DEBUG && I.end('Build CSS')
