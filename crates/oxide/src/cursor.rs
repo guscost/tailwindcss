@@ -51,19 +51,15 @@ impl<'a> Cursor<'a> {
 
     pub fn move_to(&mut self, pos: usize) {
         let len = self.input.len();
-        let pos = pos.min(len);
+        let pos = pos.clamp(0, len);
 
         self.pos = pos;
         self.at_start = pos == 0;
         self.at_end = pos + 1 >= len;
 
-        self.prev = if pos > 0 { self.input[pos - 1] } else { 0x00 };
-        self.curr = if pos < len { self.input[pos] } else { 0x00 };
-        self.next = if pos + 1 < len {
-            self.input[pos + 1]
-        } else {
-            0x00
-        };
+        self.prev = *self.input.get(pos - 1).unwrap_or(&0x00u8);
+        self.curr = *self.input.get(pos).unwrap_or(&0x00u8);
+        self.next = *self.input.get(pos + 1).unwrap_or(&0x00u8);
     }
 }
 
