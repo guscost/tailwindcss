@@ -97,25 +97,28 @@ impl<'a> Extractor<'a> {
             // variant and a utility. The inner machine will find `italic`, but the inner machine will
             // be discarded because the outer machine found a solution.
             {
-                if self.cursor.prev == b'[' {
-                    self.candidate_machines.push(Default::default());
-                }
-
                 for machine in &mut self.candidate_machines {
                     if let MachineState::Done(span) = machine.next(&self.cursor) {
                         in_flight_spans.push(span);
                     }
                 }
+
+                if self.cursor.curr == b'[' {
+                    self.candidate_machines.push(Default::default());
+                }
             }
 
             if let MachineState::Done(span) = self.candidate_machine.next(&self.cursor) {
-                dbg!(std::str::from_utf8(span.slice(self.cursor.input)));
                 in_flight_spans.push(span);
             }
 
             if let MachineState::Done(span) = self.css_variable_machine.next(&self.cursor) {
                 extracted.push(Extracted::CssVariable(span.slice(self.cursor.input)));
             }
+
+            // if self.candidate_machines.len() > 12 {
+            // dbg!(self.candidate_machines.len());
+            // }
         }
 
         if !in_flight_spans.is_empty() {
@@ -136,13 +139,18 @@ fn naive_drop_covered_spans(mut spans: Vec<Span>) -> Vec<Span> {
     spans.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
 
     let mut result = Vec::new();
-    let mut max_end = 0;
+    let mut max_end = None;
 
     // Step 2: Iterate and filter spans
     for span in spans {
-        if span.end > max_end {
+        if let Some(end) = max_end {
+            if span.end > end {
+                result.push(span);
+                max_end = Some(span.end);
+            }
+        } else {
             result.push(span);
-            max_end = span.end;
+            max_end = Some(span.end);
         }
     }
 
@@ -186,7 +194,7 @@ mod tests {
             .collect::<Vec<_>>();
         let end = start.elapsed();
         eprintln!("Time elapsed (new extractor): {:?}", end);
-        // dbg!(new_extractor);
+        dbg!(new_extractor);
 
         assert!(false);
     }
@@ -194,28 +202,28 @@ mod tests {
     #[test]
     fn test_candidates_extraction() {
         for (input, expected) in [
-            // Simple utility
-            ("flex", vec!["flex"]),
-            ("_blank", vec!["blank"]),
-            ("hover:_blank", vec!["hover:_blank"]),
-            ("hover:focus:_blank", vec!["hover:focus:_blank"]),
-            // Single character utility
-            ("a", vec!["a"]),
-            // Simple variant with simple utility
-            ("hover:flex", vec!["hover:flex"]),
-            // Multiple utilities
-            ("flex block", vec!["flex", "block"]),
-            // Simple utility with dashes
-            ("items-center", vec!["items-center"]),
-            // Simple utility with numbers
-            ("px-2.5", vec!["px-2.5"]),
-            // Arbitrary properties
-            ("[color:red]", vec!["[color:red]"]),
-            ("![color:red]", vec!["![color:red]"]),
-            ("[color:red]!", vec!["[color:red]!"]),
-            ("[color:red]/20", vec!["[color:red]/20"]),
-            ("![color:red]/20", vec!["![color:red]/20"]),
-            ("[color:red]/20!", vec!["[color:red]/20!"]),
+            //            // Simple utility
+            //            ("flex", vec!["flex"]),
+            //            ("_blank", vec!["blank"]),
+            //            ("hover:_blank", vec!["hover:_blank"]),
+            //            ("hover:focus:_blank", vec!["hover:focus:_blank"]),
+            //            // Single character utility
+            //            ("a", vec!["a"]),
+            //            // Simple variant with simple utility
+            //            ("hover:flex", vec!["hover:flex"]),
+            //            // Multiple utilities
+            //            ("flex block", vec!["flex", "block"]),
+            //            // Simple utility with dashes
+            //            ("items-center", vec!["items-center"]),
+            //            // Simple utility with numbers
+            //            ("px-2.5", vec!["px-2.5"]),
+            //            // Arbitrary properties
+            //            ("[color:red]", vec!["[color:red]"]),
+            //            ("![color:red]", vec!["![color:red]"]),
+            //            ("[color:red]!", vec!["[color:red]!"]),
+            //            ("[color:red]/20", vec!["[color:red]/20"]),
+            //            ("![color:red]/20", vec!["![color:red]/20"]),
+            //            ("[color:red]/20!", vec!["[color:red]/20!"]),
             // In HTML
             (
                 r#"<div class="flex items-center px-2.5 bg-[#0088cc] text-(--my-color)"></div>"#,

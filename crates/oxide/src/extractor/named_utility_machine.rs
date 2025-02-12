@@ -124,15 +124,15 @@ impl Machine for NamedUtilityMachine {
                 _ => MachineState::Idle,
             },
 
-            State::Parsing => match (cursor.curr, cursor.next) {
+            State::Parsing => match (cursor.prev, cursor.curr, cursor.next) {
                 // Arbitrary value with bracket notation. `-` followed by `[`.
-                (b'-', b'[') => {
+                (_, b'-', b'[') => {
                     self.state = State::ParsingArbitraryValue;
                     MachineState::Parsing
                 }
 
                 // Arbitrary value with CSS variable shorthand. `-` followed by `(`.
-                (b'-', b'(') => {
+                (_, b'-', b'(') => {
                     // Arbitrary variable will only check inside of the `(…)`, start parsing until
                     // we are inside of the parens.
                     self.skip_until_pos = Some(cursor.pos + 2);
@@ -149,27 +149,41 @@ impl Machine for NamedUtilityMachine {
                 //            ^
                 // E.g.: `flex-/`
                 //            ^
-                (b'-', b'-' | b'_' | b'.' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9') => {
-                    MachineState::Parsing
-                }
+                (_, b'-', b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9') => MachineState::Parsing,
 
-                // Valid characters inside of a utility:
+                // A dot must be surrounded by numbers
                 //
-                // At the end, we can stop parsing
+                // E.g.: `text-opacity-0.5`
+                //                     ^^^
+                (b'0'..=b'9', b'.', b'0'..=b'9') => MachineState::Parsing,
+
+                // A number must be preceded by a `-`, `.` or another number
+                //
+                // E.g.: `text-2xs`
+                //            ^^
+                //       `p-2.5`
+                //           ^^
+                //       `bg-red-500`
+                //                ^^
+                (b'-' | b'.' | b'0'..=b'9', b'0'..=b'9', 0x00) => self.done(self.start_pos, cursor),
+                (b'-' | b'.' | b'0'..=b'9', b'0'..=b'9', _) => MachineState::Parsing,
+
+                // Valid characters inside of a utility, but we are at the end
                 //
                 // E.g.: `flex`
                 //           ^
-                (b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9', _) if cursor.at_end => {
-                    self.done(self.start_pos, cursor)
-                }
+                (_, b'a'..=b'z' | b'A'..=b'Z', 0x00) => self.done(self.start_pos, cursor),
 
                 // Followed by a character that is not going to be valid
-                (b'_' | b'.' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9', next) if !matches!(next, b'-' | b'_' | b'.' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9') => {
+                //
+                // E.g.: `flex#`
+                //            ^
+                (_, b'_' | b'a'..=b'z' | b'A'..=b'Z', next) if !matches!(next, b'-' | b'_' | b'.' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9') => {
                     self.done(self.start_pos, cursor)
                 }
 
-                // Still valid, but not at the end yet
-                (b'_' | b'.' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9', _) => MachineState::Parsing,
+                // Still valid characters
+                (_, b'_' | b'a'..=b'z' | b'A'..=b'Z', _) => MachineState::Parsing,
 
                 // Everything else is invalid
                 _ => self.restart(),
@@ -246,6 +260,14 @@ mod tests {
             (" flex", vec!["flex"]),
             ("flex ", vec!["flex"]),
             (" flex ", vec!["flex"]),
+            // A dot must be in-between numbers
+            ("opacity-0.5", vec!["opacity-0.5"]),
+            ("opacity-.5", vec![]),
+            ("opacity-5.a", vec![]),
+            // A number must be preceded by a `-`, `.` or another number
+            ("text-2xs", vec!["text-2xs"]),
+            ("foo2bar", vec![]),
+            ("foo2-bar", vec![]),
             // Random invalid utilities
             ("-$", vec![]),
             ("-_", vec![]),

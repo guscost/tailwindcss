@@ -1684,7 +1684,6 @@ mod test {
             "let foo = '--color-red-500'; x.getPropertyValue(foo)",
             false,
         );
-        dbg!(&candidates);
         assert_eq!(candidates, vec![""]);
         assert_eq!(candidates, vec!["let", "foo", "--color-red-500"]);
 

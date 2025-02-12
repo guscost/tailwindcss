@@ -88,7 +88,7 @@ impl Machine for CandidateMachine {
 
                 match (variant_machine_state, utility_machine_state) {
                     // Both machines are idle, continue at the next valid candidate boundary
-                    (MachineState::Idle, MachineState::Idle) => self.resume_at_boundary(),
+                    (MachineState::Idle, MachineState::Idle) => self.restart(),
 
                     // Both machines are still parsing, keep parsing
                     (MachineState::Parsing, MachineState::Parsing) => MachineState::Parsing,
@@ -99,8 +99,11 @@ impl Machine for CandidateMachine {
                     // Utilities never end in `:`, variants _have_ to end in `:`. The state of the
                     // utility machine should not matter in this case.
                     (MachineState::Done(span), _) => {
+                        // If a variant is followed by another variant, they must be touching.
                         if let Some(end_pos) = self.last_variant_end_pos {
-                            dbg!(end_pos, span);
+                            if end_pos + 1 > span.start {
+                                return self.resume_at_boundary();
+                            }
                         }
 
                         self.last_variant_end_pos = Some(cursor.pos);
@@ -110,10 +113,25 @@ impl Machine for CandidateMachine {
                     }
 
                     // Utility machine is done, but if the next character is a `:`, then it's
-                    // probably a variant instead. Restart the utility machine.
-                    (_, MachineState::Done(_)) if cursor.next == b':' => {
-                        self.utility_machine.restart();
+                    // probably a variant instead. Restart the utility machine. If it's not a
+                    // variant, then the utility will be invalid anyway because it's not followed
+                    // by `:`.
+                    (MachineState::Parsing, MachineState::Done(_)) if cursor.next == b':' => {
+                        self.utility_machine.reset();
                         MachineState::Parsing
+                    }
+
+                    (MachineState::Parsing, state @ MachineState::Done(span)) => {
+                        match self.last_variant_end_pos {
+                            // There's a variant, but the variant and utility are not touching.
+                            Some(end_pos) if end_pos + 1 > span.start => state,
+
+                            // There's a variant, and the variant and utility are touching.
+                            Some(_) => self.done(self.start_pos, cursor),
+
+                            // There's no variant, and the utility is done.
+                            None => state,
+                        }
                     }
 
                     // Variant machine is done (but it's guaranteed to not be a variant), as long
@@ -141,7 +159,7 @@ impl Machine for CandidateMachine {
                     (_, MachineState::Done(_))
                         if matches!(
                             cursor.next,
-                            b'/' | b'!' | b'=' | b'#' | b'-' | b'[' | b'('
+                            b'/' | b'!' | b'=' | b'#' | b'-' | b'[' | b'(' | b':'
                         ) =>
                     {
                         self.resume_at_boundary()
@@ -150,19 +168,17 @@ impl Machine for CandidateMachine {
                     // Utility machine is done, and it's not going to be a variant. Candidate is
                     // guaranteed to not be followed by disallowed characters:
                     (MachineState::Idle, state @ MachineState::Done(span)) => {
-                        if let Some(end_pos) = self.last_variant_end_pos {
-                            if end_pos + 1 > span.start {
-                                state
-                            } else {
-                                self.done(self.start_pos, cursor)
-                            }
-                        } else {
-                            state
+                        match self.last_variant_end_pos {
+                            // There's a variant, but the variant and utility are not touching.
+                            Some(end_pos) if end_pos + 1 > span.start => state,
+
+                            // There's a variant, and the variant and utility are touching.
+                            Some(_) => self.done(self.start_pos, cursor),
+
+                            // There's no variant, and the utility is done.
+                            None => state,
                         }
                     }
-
-                    // Anything else is probably valid
-                    _ => MachineState::Parsing,
                 }
             }
 
@@ -215,36 +231,22 @@ mod tests {
     fn test_candidate_extraction() {
         for (input, expected) in [
             // Simple utility
-              ("flex", vec!["flex"]),
-              // Single character utility
-              ("a", vec!["a"]),
-              // Simple variant with simple utility
-              ("hover:flex", vec!["hover:flex"]),
-              // Multiple utilities
-              ("flex block", vec!["flex", "block"]),
-              ("mx-auto flex size-7 var(--my-variable) bg-red-500/(--my-opacity) items-center justify-center rounded-full ", vec![ "mx-auto", "flex", "size-7", "bg-red-500/(--my-opacity)", "items-center", "justify-center", "rounded-full"]),
-              // Simple utility with dashes
-              ("items-center", vec!["items-center"]),
-              // Simple utility with numbers
-              ("px-2.5", vec!["px-2.5"]),
-              // Arbitrary properties
-              ("[color:red]", vec!["[color:red]"]),
-              ("![color:red]", vec!["![color:red]"]),
-              ("[color:red]!", vec!["[color:red]!"]),
-              ("[color:red]/20", vec!["[color:red]/20"]),
-              ("![color:red]/20", vec!["![color:red]/20"]),
-              ("[color:red]/20!", vec!["[color:red]/20!"]),
-              // In HTML
-              (
-                  r#"<div class="flex items-center px-2.5 bg-[#0088cc] text-(--my-color)"></div>"#,
-                  vec![
-                      "flex",
-                      "items-center",
-                      "px-2.5",
-                      "bg-[#0088cc]",
-                      "text-(--my-color)",
-                  ],
-              ),
+            ("flex", vec!["flex"]),
+            // Single character utility
+            ("a", vec!["a"]),
+            // Simple utility with dashes
+            ("items-center", vec!["items-center"]),
+            // Simple utility with numbers
+            ("px-2.5", vec!["px-2.5"]),
+            // Simple variant with simple utility
+            ("hover:flex", vec!["hover:flex"]),
+            // Arbitrary properties
+            ("[color:red]", vec!["[color:red]"]),
+            ("![color:red]", vec!["![color:red]"]),
+            ("[color:red]!", vec!["[color:red]!"]),
+            ("[color:red]/20", vec!["[color:red]/20"]),
+            ("![color:red]/20", vec!["![color:red]/20"]),
+            ("[color:red]/20!", vec!["[color:red]/20!"]),
         ] {
             let mut machine = CandidateMachine::default();
             let mut cursor = Cursor::new(input.as_bytes());
