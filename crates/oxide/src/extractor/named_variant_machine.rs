@@ -82,12 +82,12 @@ impl Machine for NamedVariantMachine {
                 _ => MachineState::Idle,
             },
 
-            State::Parsing => match (cursor.prev, cursor.curr, cursor.next) {
+            State::Parsing => match (cursor.curr, cursor.next) {
                 // Start of an arbitrary value
-                (_, b'-', b'[') => self.parse_arbitrary_value(),
+                (b'-', b'[') => self.parse_arbitrary_value(),
 
                 // Start of an arbitrary variable
-                (_, b'-', b'(') => self.parse_arbitrary_variable(),
+                (b'-', b'(') => self.parse_arbitrary_variable(),
 
                 // Valid characters _if_ followed by another valid character. These characters are
                 // only valid inside of the variant but not at the end of the variant.
@@ -98,12 +98,13 @@ impl Machine for NamedVariantMachine {
                 //            ^
                 // E.g.: `hover-/`
                 //            ^
-                (_, b'-' | b'_', b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9') => MachineState::Parsing,
+                (
+                    b'-' | b'_', //
+                    b'-' | b'_' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9',
+                ) => MachineState::Parsing,
 
                 // Still valid characters
-                (_, b'_' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'*', _) => {
-                    MachineState::Parsing
-                }
+                (b'_' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'*', _) => MachineState::Parsing,
 
                 // A `/` means we are at the end of the variant, but there might be a modifier
                 //
@@ -113,13 +114,16 @@ impl Machine for NamedVariantMachine {
                 // group-hover/name:
                 //            ^
                 // ```
-                (_, b'/', _) => self.parse_modifier(),
+                (b'/', _) => {
+                    self.modifier_machine.next(cursor);
+                    self.parse_modifier()
+                }
 
                 // A `:` means we are at the end of the variant
                 //
                 // E.g.: `hover:`
                 //             ^
-                (_, b':', _) => self.done(self.start_pos, cursor),
+                (b':', _) => self.done(self.start_pos, cursor),
 
                 // Everything else is invalid
                 _ => self.restart(),

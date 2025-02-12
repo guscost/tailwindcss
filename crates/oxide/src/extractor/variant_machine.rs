@@ -154,6 +154,10 @@ mod tests {
                 "[&>[data-slot=icon]:last-child]:",
                 vec!["[&>[data-slot=icon]:last-child]:"],
             ),
+            (
+                "sm:[&>[data-slot=icon]:last-child]:",
+                vec!["sm:", "[&>[data-slot=icon]:last-child]:"],
+            ),
             // Modifiers
             ("group-hover/foo:flex", vec!["group-hover/foo:"]),
             ("group-hover/[.parent]:flex", vec!["group-hover/[.parent]:"]),

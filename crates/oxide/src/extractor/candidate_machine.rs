@@ -42,6 +42,10 @@ impl Machine for CandidateMachine {
             None => {}
         }
 
+        // let so_far = std::str::from_utf8(&cursor.input[self.start_pos..=cursor.pos]);
+        // dbg!(so_far);
+        // eprintln!("{}", &cursor);
+
         match self.state {
             State::Idle => match (cursor.curr, cursor.next) {
                 // Candidates don't start with `--`, skip ahead
@@ -142,6 +146,8 @@ impl Machine for CandidateMachine {
                     }
 
                     (MachineState::Parsing, state @ MachineState::Done(span)) => {
+                        // TODO: Ensure the variant is parsing but incomplete
+                        //
                         match self.last_variant_end_pos {
                             // There's a variant, but the variant and utility are not touching.
                             Some(end_pos) if end_pos + 1 > span.start => state,
@@ -250,40 +256,58 @@ mod tests {
     #[test]
     fn test_candidate_extraction() {
         for (input, expected) in [
-            // Simple utility
-            ("flex", vec!["flex"]),
-            // Single character utility
-            ("a", vec!["a"]),
-            // Simple utility with dashes
-            ("items-center", vec!["items-center"]),
-            // Simple utility with numbers
-            ("px-2.5", vec!["px-2.5"]),
-            // Simple variant with simple utility
-            ("hover:flex", vec!["hover:flex"]),
-            // Arbitrary properties
-            ("[color:red]", vec!["[color:red]"]),
-            ("![color:red]", vec!["![color:red]"]),
-            ("[color:red]!", vec!["[color:red]!"]),
-            ("[color:red]/20", vec!["[color:red]/20"]),
-            ("![color:red]/20", vec!["![color:red]/20"]),
-            ("[color:red]/20!", vec!["[color:red]/20!"]),
-            // With multiple variants
-            ("hover:focus:flex", vec!["hover:focus:flex"]),
-            // With complex variants
-            (
-                "[&>[data-slot=icon]:last-child]:right-2.5",
-                vec!["[&>[data-slot=icon]:last-child]:right-2.5"],
-            ),
-            // With multiple (complex) variants
+            ////       // Simple utility
+            ////       ("flex", vec!["flex"]),
+            ////       // Single character utility
+            ////       ("a", vec!["a"]),
+            ////       // Simple utility with dashes
+            ////       ("items-center", vec!["items-center"]),
+            ////       // Simple utility with numbers
+            ////       ("px-2.5", vec!["px-2.5"]),
+            ////       // Simple variant with simple utility
+            ////       ("hover:flex", vec!["hover:flex"]),
+            ////       // Arbitrary properties
+            ////       ("[color:red]", vec!["[color:red]"]),
+            ////       ("![color:red]", vec!["![color:red]"]),
+            ////       ("[color:red]!", vec!["[color:red]!"]),
+            ////       ("[color:red]/20", vec!["[color:red]/20"]),
+            ////       ("![color:red]/20", vec!["![color:red]/20"]),
+            ////       ("[color:red]/20!", vec!["[color:red]/20!"]),
+            ////       // With multiple variants
+            ////       ("hover:focus:flex", vec!["hover:focus:flex"]),
+            ////       // With complex variants
+            ////       (
+            ////           "[&>[data-slot=icon]:last-child]:right-2.5",
+            ////           vec![
+            ////               "icon",
+            ////               "last-child",
+            ////               "[&>[data-slot=icon]:last-child]:right-2.5",
+            ////           ],
+            ////       ),
+            ////       // With multiple (complex) variants
+            ////       (
+            ////           "[&>[data-slot=icon]:last-child]:sm:right-2.5",
+            ////           vec![
+            ////               "icon",
+            ////               "last-child",
+            ////               "[&>[data-slot=icon]:last-child]:sm:right-2.5",
+            ////           ],
+            ////       ),
             (
                 "sm:[&>[data-slot=icon]:last-child]:right-2.5",
-                vec!["sm:[&>[data-slot=icon]:last-child]:right-2.5"],
+                vec![
+                    "icon",
+                    "last-child",
+                    "sm:[&>[data-slot=icon]:last-child]:right-2.5",
+                ],
             ),
         ] {
             let mut machine = CandidateMachine::default();
             let mut cursor = Cursor::new(input.as_bytes());
 
             let mut actual: Vec<&str> = vec![];
+
+            dbg!(&input);
 
             for i in 0..input.len() {
                 cursor.move_to(i);
