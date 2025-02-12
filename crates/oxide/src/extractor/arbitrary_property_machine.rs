@@ -69,8 +69,7 @@ impl Machine for ArbitraryPropertyMachine {
                 // Start of an arbitrary property
                 b'[' => {
                     self.start_pos = cursor.pos;
-                    self.state = State::ParsingProperty;
-                    MachineState::Parsing
+                    self.parse_property()
                 }
 
                 // Anything else is not a valid start of an arbitrary value
@@ -79,20 +78,13 @@ impl Machine for ArbitraryPropertyMachine {
 
             State::ParsingProperty => match (cursor.curr, cursor.next) {
                 // Start of a CSS variable
-                (b'-', b'-') => {
-                    self.css_variable_machine.next(cursor);
-                    self.state = State::ParsingPropertyVariable;
-                    MachineState::Parsing
-                }
+                (b'-', b'-') => self.parse_property_variable(cursor),
 
                 // Only alphanumeric characters and dashes are allowed
                 (b'a'..=b'z' | b'A'..=b'Z' | b'-', _) => MachineState::Parsing,
 
                 // End of the property name, but there must be at least a single character
-                (b':', _) if cursor.pos > self.start_pos + 1 => {
-                    self.state = State::ParsingValue;
-                    MachineState::Parsing
-                }
+                (b':', _) if cursor.pos > self.start_pos + 1 => self.parse_value(),
 
                 // Anything else is not a valid property character
                 _ => self.restart(),
@@ -108,8 +100,7 @@ impl Machine for ArbitraryPropertyMachine {
                     //                   ^
                     b':' => {
                         self.skip_until_pos = Some(cursor.pos + 2);
-                        self.state = State::ParsingValue;
-                        MachineState::Parsing
+                        self.parse_value()
                     }
 
                     // Invalid arbitrary property
@@ -162,11 +153,7 @@ impl Machine for ArbitraryPropertyMachine {
                 }
 
                 // Start of a string
-                b'"' | b'\'' | b'`' => {
-                    self.string_machine.next(cursor);
-                    self.state = State::ParsingString;
-                    MachineState::Parsing
-                }
+                b'"' | b'\'' | b'`' => self.parse_string(cursor),
 
                 // Another `:` inside of an arbitrary property is only valid inside of a string or
                 // inside of brackets. Everywhere else, it's invalid.
@@ -189,12 +176,37 @@ impl Machine for ArbitraryPropertyMachine {
             State::ParsingString => match self.string_machine.next(cursor) {
                 MachineState::Idle => self.restart(),
                 MachineState::Parsing => MachineState::Parsing,
-                MachineState::Done(_) => {
-                    self.state = State::ParsingProperty;
-                    MachineState::Parsing
-                }
+                MachineState::Done(_) => self.parse_value(),
             },
         }
+    }
+}
+
+impl ArbitraryPropertyMachine {
+    #[inline(always)]
+    fn parse_string(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
+        self.string_machine.next(cursor);
+        self.state = State::ParsingString;
+        MachineState::Parsing
+    }
+
+    #[inline(always)]
+    fn parse_property(&mut self) -> MachineState {
+        self.state = State::ParsingProperty;
+        MachineState::Parsing
+    }
+
+    #[inline(always)]
+    fn parse_property_variable(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
+        self.css_variable_machine.next(cursor);
+        self.state = State::ParsingPropertyVariable;
+        MachineState::Parsing
+    }
+
+    #[inline(always)]
+    fn parse_value(&mut self) -> MachineState {
+        self.state = State::ParsingValue;
+        MachineState::Parsing
     }
 }
 
@@ -215,6 +227,16 @@ mod tests {
             ("[-webkit-value:red]", vec!["[-webkit-value:red]"]),
             // Setting a CSS Variable
             ("[--my-color:red]", vec!["[--my-color:red]"]),
+            // Value with nested brackets
+            (
+                "[background:url(https://example.com)]",
+                vec!["[background:url(https://example.com)]"],
+            ),
+            // Value containing strings
+            (
+                "[background:url('https://example.com')]",
+                vec!["[background:url('https://example.com')]"],
+            ),
             // --------------------------------------------------------
 
             // Invalid CSS Variable
@@ -223,7 +245,7 @@ mod tests {
             ("[color: red]", vec![]),
             // Multiple colons are not allowed
             ("[color:red:blue]", vec![]),
-            // Only alphanumeric characters are allowed
+            // Only alphanumeric characters are allowed in the property name
             ("[background_color:red]", vec![]),
             // A color is required
             ("[red]", vec![]),
@@ -233,6 +255,8 @@ mod tests {
             ("[]", vec![]),
             // Missing colon in more complex example
             (r#"[CssClass("gap-y-4")]"#, vec![]),
+            // Brackets must be balanced
+            ("[background:url(https://example.com]", vec![]),
         ] {
             let mut machine = ArbitraryPropertyMachine::default();
             let mut cursor = Cursor::new(input.as_bytes());

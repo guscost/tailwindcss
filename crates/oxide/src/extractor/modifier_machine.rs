@@ -1,7 +1,8 @@
 use crate::cursor;
 use crate::extractor::arbitrary_value_machine::ArbitraryValueMachine;
 use crate::extractor::machine::{Machine, MachineState};
-use crate::extractor::CssVariableMachine;
+
+use super::arbitrary_variable_machine::ArbitraryVariableMachine;
 
 #[derive(Debug, Default)]
 pub(crate) struct ModifierMachine {
@@ -15,7 +16,7 @@ pub(crate) struct ModifierMachine {
     state: State,
 
     arbitrary_value_machine: ArbitraryValueMachine,
-    css_variable_machine: CssVariableMachine,
+    arbitrary_variable_machine: ArbitraryVariableMachine,
 }
 
 #[derive(Debug, Default)]
@@ -45,26 +46,7 @@ enum State {
     /// bg-red-500/(--my-opacity)
     ///           ^^^^^^^^^^^^^^^
     /// ```
-    ParsingArbitraryVariable(ArbitraryVariableStage),
-}
-
-#[derive(Debug)]
-enum ArbitraryVariableStage {
-    /// Currently parsing the inside of the arbitrary variable
-    ///
-    /// ```
-    /// bg-red-500/(--my-opacity)
-    ///             ^^^^^^^^^^^^
-    /// ```
-    Inside,
-
-    /// Currently parsing the end of the arbitrary variable
-    ///
-    /// ```
-    /// bg-red-500/(--my-opacity)
-    ///                         ^
-    /// ```
-    End,
+    ParsingArbitraryVariable,
 }
 
 impl Machine for ModifierMachine {
@@ -79,26 +61,13 @@ impl Machine for ModifierMachine {
         match self.state {
             State::Idle => match (cursor.curr, cursor.next) {
                 // Start of an arbitrary value
-                (b'/', b'[') => {
-                    self.start_pos = cursor.pos;
-                    self.state = State::ParsingArbitraryValue;
-                    MachineState::Parsing
-                }
+                (b'/', b'[') => self.parse_arbitrary_value(cursor),
 
                 // Start of an arbitrary variable
-                (b'/', b'(') => {
-                    self.start_pos = cursor.pos;
-                    self.skip_until_pos = Some(cursor.pos + 2);
-                    self.state = State::ParsingArbitraryVariable(ArbitraryVariableStage::Inside);
-                    MachineState::Parsing
-                }
+                (b'/', b'(') => self.parse_arbitrary_variable(cursor),
 
                 // Start of a named modifier
-                (b'/', b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9') => {
-                    self.start_pos = cursor.pos;
-                    self.state = State::ParsingNamed;
-                    MachineState::Parsing
-                }
+                (b'/', b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9') => self.parse_named(cursor),
 
                 // Anything else is not a valid start of a modifier
                 _ => MachineState::Idle,
@@ -126,20 +95,10 @@ impl Machine for ModifierMachine {
                 MachineState::Done(_) => self.done(self.start_pos, cursor),
             },
 
-            State::ParsingArbitraryVariable(ArbitraryVariableStage::Inside) => {
-                match self.css_variable_machine.next(cursor) {
-                    MachineState::Idle => self.restart(),
-                    MachineState::Parsing => MachineState::Parsing,
-                    MachineState::Done(_) => self.parse_arbitrary_variable_end(),
-                }
-            }
-
-            State::ParsingArbitraryVariable(ArbitraryVariableStage::End) => match cursor.curr {
-                // End of an arbitrary variable must be followed by `)`
-                b')' => self.done(self.start_pos, cursor),
-
-                // Invalid modifier, not ending at `)`
-                _ => self.restart(),
+            State::ParsingArbitraryVariable => match self.arbitrary_variable_machine.next(cursor) {
+                MachineState::Idle => self.restart(),
+                MachineState::Parsing => MachineState::Parsing,
+                MachineState::Done(_) => self.done(self.start_pos, cursor),
             },
         }
     }
@@ -147,8 +106,23 @@ impl Machine for ModifierMachine {
 
 impl ModifierMachine {
     #[inline(always)]
-    fn parse_arbitrary_variable_end(&mut self) -> MachineState {
-        self.state = State::ParsingArbitraryVariable(ArbitraryVariableStage::End);
+    fn parse_arbitrary_value(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
+        self.start_pos = cursor.pos;
+        self.state = State::ParsingArbitraryValue;
+        MachineState::Parsing
+    }
+
+    #[inline(always)]
+    fn parse_arbitrary_variable(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
+        self.start_pos = cursor.pos;
+        self.state = State::ParsingArbitraryVariable;
+        MachineState::Parsing
+    }
+
+    #[inline(always)]
+    fn parse_named(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
+        self.start_pos = cursor.pos;
+        self.state = State::ParsingNamed;
         MachineState::Parsing
     }
 }

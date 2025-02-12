@@ -1,6 +1,6 @@
 use crate::cursor;
 use crate::extractor::arbitrary_value_machine::ArbitraryValueMachine;
-use crate::extractor::css_variable_machine::CssVariableMachine;
+use crate::extractor::arbitrary_variable_machine::ArbitraryVariableMachine;
 use crate::extractor::machine::{Machine, MachineState};
 
 #[derive(Debug, Default)]
@@ -14,8 +14,8 @@ pub(crate) struct NamedUtilityMachine {
     /// Current state of the machine
     state: State,
 
+    arbitrary_variable_machine: ArbitraryVariableMachine,
     arbitrary_value_machine: ArbitraryValueMachine,
-    css_variable_machine: CssVariableMachine,
 }
 
 #[derive(Debug, Default)]
@@ -34,26 +34,7 @@ enum State {
     /// Parsing a functional utility with an arbitrary variable
     ///
     /// E.g.: `text-(--my-color)`.
-    ParsingArbitraryVariable(ArbitraryVariableStage),
-}
-
-#[derive(Debug)]
-enum ArbitraryVariableStage {
-    /// Currently parsing the inside of the arbitrary variable
-    ///
-    /// ```
-    /// bg-red-500/(--my-opacity)
-    ///             ^^^^^^^^^^^^
-    /// ```
-    Inside,
-
-    /// Currently parsing the end of the arbitrary variable
-    ///
-    /// ```
-    /// bg-red-500/(--my-opacity)
-    ///                         ^
-    /// ```
-    End,
+    ParsingArbitraryVariable,
 }
 
 impl Machine for NamedUtilityMachine {
@@ -89,11 +70,13 @@ impl Machine for NamedUtilityMachine {
                 //
                 // Must be followed by a space or the end of the input
                 //
-                // E.g.: `<div class="a"></div>`
-                //                    ^
+                // E.g.: `<div class="a b c"></div>`
+                //                      ^
+                // E.g.: `a`
+                //        ^
                 (b'a'..=b'z', x) if x.is_ascii_whitespace() || cursor.at_end => {
                     self.start_pos = cursor.pos;
-                    self.done(cursor.pos, cursor)
+                    self.done(self.start_pos, cursor)
                 }
 
                 // Valid start characters
@@ -104,8 +87,7 @@ impl Machine for NamedUtilityMachine {
                 //        ^
                 (b'a'..=b'z' | b'@', _) => {
                     self.start_pos = cursor.pos;
-                    self.state = State::Parsing;
-                    MachineState::Parsing
+                    self.parse()
                 }
 
                 // Valid start of a negative utility, if followed by another set of valid
@@ -115,8 +97,7 @@ impl Machine for NamedUtilityMachine {
                 //        ^^
                 (b'-', b'a'..=b'z' | b'A'..=b'Z') => {
                     self.start_pos = cursor.pos;
-                    self.state = State::Parsing;
-                    MachineState::Parsing
+                    self.parse()
                 }
 
                 // Everything else, is not a valid start of the utility. But the next character
@@ -125,23 +106,14 @@ impl Machine for NamedUtilityMachine {
             },
 
             State::Parsing => match (cursor.prev, cursor.curr, cursor.next) {
-                // Arbitrary value with bracket notation. `-` followed by `[`.
-                (_, b'-', b'[') => {
-                    self.state = State::ParsingArbitraryValue;
-                    MachineState::Parsing
-                }
+                // Start of an arbitrary value
+                (_, b'-', b'[') => self.parse_arbitrary_value(),
 
-                // Arbitrary value with CSS variable shorthand. `-` followed by `(`.
-                (_, b'-', b'(') => {
-                    // Arbitrary variable will only check inside of the `(…)`, start parsing until
-                    // we are inside of the parens.
-                    self.skip_until_pos = Some(cursor.pos + 2);
-                    self.state = State::ParsingArbitraryVariable(ArbitraryVariableStage::Inside);
-                    MachineState::Parsing
-                }
+                // Start of an arbitrary variable
+                (_, b'-', b'(') => self.parse_arbitrary_variable(),
 
-                // Valid characters if followed by another valid character. These characters are
-                // only valid inside of the utility but not at the end.
+                // Valid characters _if_ followed by another valid character. These characters are
+                // only valid inside of the utility but not at the end of the utility.
                 //
                 // E.g.: `flex-`
                 //            ^
@@ -149,15 +121,16 @@ impl Machine for NamedUtilityMachine {
                 //            ^
                 // E.g.: `flex-/`
                 //            ^
-                (_, b'-', b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9') => MachineState::Parsing,
+                (_, b'-' | b'_', b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9') => MachineState::Parsing,
 
                 // A dot must be surrounded by numbers
                 //
-                // E.g.: `text-opacity-0.5`
-                //                     ^^^
+                // E.g.: `px-2.5`
+                //           ^^^
                 (b'0'..=b'9', b'.', b'0'..=b'9') => MachineState::Parsing,
 
-                // A number must be preceded by a `-`, `.` or another number
+                // A number must be preceded by a `-`, `.` or another number, and can be followed
+                // by a `.` or an alphanumeric character.
                 //
                 // E.g.: `text-2xs`
                 //            ^^
@@ -165,8 +138,18 @@ impl Machine for NamedUtilityMachine {
                 //           ^^
                 //       `bg-red-500`
                 //                ^^
-                (b'-' | b'.' | b'0'..=b'9', b'0'..=b'9', 0x00) => self.done(self.start_pos, cursor),
-                (b'-' | b'.' | b'0'..=b'9', b'0'..=b'9', _) => MachineState::Parsing,
+                (
+                    b'-' | b'.' | b'0'..=b'9',                      // Previous
+                    b'0'..=b'9',                                    // Current
+                    b'.' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z', // Next
+                ) => MachineState::Parsing,
+
+                // A number must be preceded by a `-`, `.` or another number, a number followed by
+                // something else, means that we are at the end of the utility
+                //
+                // E.g.: `p-2.5 `
+                //             ^
+                (b'-' | b'.' | b'0'..=b'9', b'0'..=b'9', _) => self.done(self.start_pos, cursor),
 
                 // Valid characters inside of a utility, but we are at the end
                 //
@@ -195,20 +178,10 @@ impl Machine for NamedUtilityMachine {
                 MachineState::Done(_) => self.done(self.start_pos, cursor),
             },
 
-            State::ParsingArbitraryVariable(ArbitraryVariableStage::Inside) => {
-                match self.css_variable_machine.next(cursor) {
-                    MachineState::Idle => self.restart(),
-                    MachineState::Parsing => MachineState::Parsing,
-                    MachineState::Done(_) => self.parse_arbitrary_variable_end(),
-                }
-            }
-
-            State::ParsingArbitraryVariable(ArbitraryVariableStage::End) => match cursor.curr {
-                // End of an arbitrary variable must be followed by `)`
-                b')' => self.done(self.start_pos, cursor),
-
-                // Invalid modifier, not ending at `)`
-                _ => self.restart(),
+            State::ParsingArbitraryVariable => match self.arbitrary_variable_machine.next(cursor) {
+                MachineState::Idle => self.restart(),
+                MachineState::Parsing => MachineState::Parsing,
+                MachineState::Done(_) => self.done(self.start_pos, cursor),
             },
         }
     }
@@ -216,8 +189,20 @@ impl Machine for NamedUtilityMachine {
 
 impl NamedUtilityMachine {
     #[inline(always)]
-    fn parse_arbitrary_variable_end(&mut self) -> MachineState {
-        self.state = State::ParsingArbitraryVariable(ArbitraryVariableStage::End);
+    fn parse(&mut self) -> MachineState {
+        self.state = State::Parsing;
+        MachineState::Parsing
+    }
+
+    #[inline(always)]
+    fn parse_arbitrary_value(&mut self) -> MachineState {
+        self.state = State::ParsingArbitraryValue;
+        MachineState::Parsing
+    }
+
+    #[inline(always)]
+    fn parse_arbitrary_variable(&mut self) -> MachineState {
+        self.state = State::ParsingArbitraryVariable;
         MachineState::Parsing
     }
 }
@@ -244,6 +229,8 @@ mod tests {
             ("bg-[#0088cc]", vec!["bg-[#0088cc]"]),
             // Arbitrary variable
             ("bg-(--my-color)", vec!["bg-(--my-color)"]),
+            // Arbitrary variable with fallback
+            ("bg-(--my-color,red,blue)", vec!["bg-(--my-color,red,blue)"]),
             // --------------------------------------------------------
 
             // Exceptions:
@@ -263,11 +250,13 @@ mod tests {
             // A dot must be in-between numbers
             ("opacity-0.5", vec!["opacity-0.5"]),
             ("opacity-.5", vec![]),
-            ("opacity-5.a", vec![]),
+            ("opacity-5.", vec![]),
             // A number must be preceded by a `-`, `.` or another number
             ("text-2xs", vec!["text-2xs"]),
-            ("foo2bar", vec![]),
-            ("foo2-bar", vec![]),
+            // "foo2" is invalid, but "bar" is not because we don't check boundary characters as
+            // part of this state machine.
+            ("foo2bar", vec!["bar"]),
+            ("foo2-bar", vec!["-bar"]),
             // Random invalid utilities
             ("-$", vec![]),
             ("-_", vec![]),

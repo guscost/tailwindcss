@@ -46,8 +46,7 @@ impl Machine for ArbitraryValueMachine {
                 // Start of an arbitrary value
                 b'[' => {
                     self.start_pos = cursor.pos;
-                    self.state = State::Parsing;
-                    MachineState::Parsing
+                    self.parse()
                 }
 
                 // Anything else is not a valid start of an arbitrary value
@@ -99,11 +98,7 @@ impl Machine for ArbitraryValueMachine {
                 }
 
                 // Start of a string
-                b'"' | b'\'' | b'`' => {
-                    self.string_machine.next(cursor);
-                    self.state = State::ParsingString;
-                    MachineState::Parsing
-                }
+                b'"' | b'\'' | b'`' => self.parse_string(cursor),
 
                 // Any kind of whitespace is not allowed
                 x if x.is_ascii_whitespace() => self.restart(),
@@ -115,12 +110,24 @@ impl Machine for ArbitraryValueMachine {
             State::ParsingString => match self.string_machine.next(cursor) {
                 MachineState::Idle => self.restart(),
                 MachineState::Parsing => MachineState::Parsing,
-                MachineState::Done(_) => {
-                    self.state = State::Parsing;
-                    MachineState::Parsing
-                }
+                MachineState::Done(_) => self.parse(),
             },
         }
+    }
+}
+
+impl ArbitraryValueMachine {
+    #[inline(always)]
+    fn parse(&mut self) -> MachineState {
+        self.state = State::Parsing;
+        MachineState::Parsing
+    }
+
+    #[inline(always)]
+    fn parse_string(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
+        self.string_machine.next(cursor);
+        self.state = State::ParsingString;
+        MachineState::Parsing
     }
 }
 
