@@ -1,23 +1,18 @@
 use super::arbitrary_value_machine::ArbitraryValueMachine;
-use super::named_utility_machine::NamedUtilityMachine;
 use crate::cursor;
 use crate::extractor::machine::{Machine, MachineState};
-use crate::extractor::modifier_machine::ModifierMachine;
+use crate::extractor::named_variant_machine::NamedVariantMachine;
 
 #[derive(Debug, Default)]
 pub(crate) struct VariantMachine {
     /// Start position of the variant
     start_pos: usize,
 
-    /// Ignore the characters until this specific position
-    skip_until_pos: Option<usize>,
-
     /// Current state of the machine
     state: State,
 
     arbitrary_value_machine: ArbitraryValueMachine,
-    named_utility_machine: NamedUtilityMachine,
-    modifier_machine: ModifierMachine,
+    named_variant_machine: NamedVariantMachine,
 }
 
 #[derive(Debug, Default)]
@@ -45,17 +40,6 @@ enum State {
     /// ```
     ParsingArbitraryVariant,
 
-    /// Parsing a modifier
-    ///
-    /// E.g.:
-    ///
-    /// ```
-    /// group-hover/name:
-    ///            ^^^^^
-    /// ```
-    ///
-    ParsingModifier,
-
     /// Parsing the end of a variant
     ///
     /// E.g.:
@@ -69,76 +53,26 @@ enum State {
 
 impl Machine for VariantMachine {
     fn next(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
-        // Skipping characters until a specific position
-        match self.skip_until_pos {
-            Some(skip_until) if cursor.pos < skip_until => return MachineState::Parsing,
-            Some(_) => self.skip_until_pos = None,
-            None => {}
-        }
-
         match self.state {
             State::Idle => match (cursor.curr, cursor.next) {
                 // Start of an arbitrary variant
                 //
                 // E.g.: `[&:hover]:`
                 //        ^
-                (b'[', _) => {
-                    self.start_pos = cursor.pos;
-                    self.arbitrary_value_machine.next(cursor);
-                    self.state = State::ParsingArbitraryVariant;
-                    MachineState::Parsing
-                }
+                (b'[', _) => self.parse_arbitrary_variant(cursor),
 
-                // Valid single character variant
-                //
-                // Must be followed by a `:`
-                (b'a'..=b'z', b':') => {
-                    self.start_pos = cursor.pos;
-                    self.parse_end()
-                }
-
-                // Valid start characters for a named variant
-                //
-                // E.g.: `hover:`
-                //        ^
-                (b'-' | b'_' | b'a'..=b'z' | b'@', _) => {
-                    self.start_pos = cursor.pos;
-                    self.named_utility_machine.next(cursor);
-                    self.state = State::ParsingNamedVariant;
-                    MachineState::Parsing
-                }
-
-                // Everything else, is not a valid start of a variant.
-                _ => MachineState::Idle,
+                // Start of a named variant
+                _ => match self.parse_named_variant(cursor) {
+                    MachineState::Idle => self.restart(),
+                    MachineState::Parsing => MachineState::Parsing,
+                    variant @ MachineState::Done(_) => variant,
+                },
             },
 
-            State::ParsingNamedVariant => match self.named_utility_machine.next(cursor) {
+            State::ParsingNamedVariant => match self.named_variant_machine.next(cursor) {
                 MachineState::Idle => self.restart(),
                 MachineState::Parsing => MachineState::Parsing,
-                MachineState::Done(_) => match cursor.next {
-                    // Named variant can be followed by a modifier
-                    //
-                    // E.g.:
-                    //
-                    // ```
-                    // group-hover/foo:
-                    //            ^
-                    // ```
-                    b'/' => self.parse_modifier(),
-
-                    // Named variant must be followed by a `:`
-                    //
-                    // E.g.:
-                    //
-                    // ```
-                    // hover:
-                    //      ^
-                    // ```
-                    b':' => self.parse_end(),
-
-                    // Everything else is invalid
-                    _ => self.restart(),
-                },
+                MachineState::Done(_) => self.done(self.start_pos, cursor),
             },
 
             State::ParsingArbitraryVariant => match self.arbitrary_value_machine.next(cursor) {
@@ -149,21 +83,6 @@ impl Machine for VariantMachine {
                     //
                     // E.g.: `[&:hover]:`
                     //                 ^
-                    b':' => self.parse_end(),
-
-                    // Everything else is invalid
-                    _ => self.restart(),
-                },
-            },
-
-            State::ParsingModifier => match self.modifier_machine.next(cursor) {
-                MachineState::Idle => self.restart(),
-                MachineState::Parsing => MachineState::Parsing,
-                MachineState::Done(_) => match cursor.next {
-                    // Modifier must be followed by a `:`
-                    //
-                    // E.g.: `group-hover/name:`
-                    //                        ^
                     b':' => self.parse_end(),
 
                     // Everything else is invalid
@@ -187,9 +106,18 @@ impl Machine for VariantMachine {
 
 impl VariantMachine {
     #[inline(always)]
-    fn parse_modifier(&mut self) -> MachineState {
-        self.state = State::ParsingModifier;
+    fn parse_arbitrary_variant(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
+        self.start_pos = cursor.pos;
+        self.arbitrary_value_machine.next(cursor);
+        self.state = State::ParsingArbitraryVariant;
         MachineState::Parsing
+    }
+
+    #[inline(always)]
+    fn parse_named_variant(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
+        self.start_pos = cursor.pos;
+        self.state = State::ParsingNamedVariant;
+        self.named_variant_machine.next(cursor)
     }
 
     #[inline(always)]
@@ -210,12 +138,22 @@ mod tests {
         for (input, expected) in [
             // Simple variant
             ("hover:flex", vec!["hover:"]),
+            // Single character variant
+            ("a:flex", vec!["a:"]),
+            ("*:flex", vec!["*:"]),
+            // With special characters
+            ("**:flex", vec!["**:"]),
             // With dashes
             ("data-disabled:flex", vec!["data-disabled:"]),
             // Multiple variants
             ("hover:focus:flex", vec!["hover:", "focus:"]),
             // Arbitrary variant
             ("[&:hover]:flex", vec!["[&:hover]:"]),
+            // Arbitrary variant with nested brackets
+            (
+                "[&>[data-slot=icon]:last-child]:",
+                vec!["[&>[data-slot=icon]:last-child]:"],
+            ),
             // Modifiers
             ("group-hover/foo:flex", vec!["group-hover/foo:"]),
             ("group-hover/[.parent]:flex", vec!["group-hover/[.parent]:"]),

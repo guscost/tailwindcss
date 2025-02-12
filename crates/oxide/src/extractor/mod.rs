@@ -13,6 +13,7 @@ mod css_variable_machine;
 mod machine;
 mod modifier_machine;
 mod named_utility_machine;
+mod named_variant_machine;
 mod string_machine;
 mod utility_machine;
 mod variant_machine;
@@ -126,9 +127,9 @@ impl<'a> Extractor<'a> {
                 extracted.push(Extracted::CssVariable(span.slice(self.cursor.input)));
             }
 
-            // if self.candidate_machines.len() > 12 {
-            // dbg!(self.candidate_machines.len());
-            // }
+            if self.candidate_machines.len() > 12 {
+                dbg!(self.candidate_machines.len());
+            }
         }
 
         if !in_flight_spans.is_empty() {
@@ -176,22 +177,17 @@ mod tests {
 
     #[test]
     fn test_extract_performance() {
-        assert!(true);
-        if false {
+        if true {
             let iterations = 100_000;
 
-            // let input = " px-(--my-variable) ";
-            // let input = "flex items-center justify-center rounded-full ";
-            let input = "mx-auto flex size-7 var(--my-variable) bg-red-500/(--my-opacity) items-center justify-center rounded-full ";
-            // let input = "a b";
-            // let input = "--my-variable var(--other-variable) calc(var(--foo)*var(--bar))";
+            let input = "flex items-center justify-center rounded-full ";
 
             let throughput = Throughput::compute(iterations, input.len(), || {
                 _ = black_box(parser::Extractor::all(input.as_bytes(), Default::default()));
             });
             eprintln!("Old extractor: {:}", throughput);
 
-            let throughput = Throughput::compute(iterations * 4, input.len(), || {
+            let throughput = Throughput::compute(iterations, input.len(), || {
                 let mut extractor = Extractor::new(input.as_bytes());
                 _ = black_box(extractor.extract());
             });
@@ -215,28 +211,28 @@ mod tests {
     #[test]
     fn test_candidates_extraction() {
         for (input, expected) in [
-            //            // Simple utility
-            //            ("flex", vec!["flex"]),
-            //            ("_blank", vec!["blank"]),
-            //            ("hover:_blank", vec!["hover:_blank"]),
-            //            ("hover:focus:_blank", vec!["hover:focus:_blank"]),
-            //            // Single character utility
-            //            ("a", vec!["a"]),
-            //            // Simple variant with simple utility
-            //            ("hover:flex", vec!["hover:flex"]),
-            //            // Multiple utilities
-            //            ("flex block", vec!["flex", "block"]),
-            //            // Simple utility with dashes
-            //            ("items-center", vec!["items-center"]),
-            //            // Simple utility with numbers
-            //            ("px-2.5", vec!["px-2.5"]),
-            //            // Arbitrary properties
-            //            ("[color:red]", vec!["[color:red]"]),
-            //            ("![color:red]", vec!["![color:red]"]),
-            //            ("[color:red]!", vec!["[color:red]!"]),
-            //            ("[color:red]/20", vec!["[color:red]/20"]),
-            //            ("![color:red]/20", vec!["![color:red]/20"]),
-            //            ("[color:red]/20!", vec!["[color:red]/20!"]),
+            // Simple utility
+            ("flex", vec!["flex"]),
+            ("_blank", vec!["blank"]),
+            ("hover:_blank", vec!["hover:_blank"]),
+            ("hover:focus:_blank", vec!["hover:focus:_blank"]),
+            // Single character utility
+            ("a", vec!["a"]),
+            // Simple variant with simple utility
+            ("hover:flex", vec!["hover:flex"]),
+            // Multiple utilities
+            ("flex block", vec!["flex", "block"]),
+            // Simple utility with dashes
+            ("items-center", vec!["items-center"]),
+            // Simple utility with numbers
+            ("px-2.5", vec!["px-2.5"]),
+            // Arbitrary properties
+            ("[color:red]", vec!["[color:red]"]),
+            ("![color:red]", vec!["![color:red]"]),
+            ("[color:red]!", vec!["[color:red]!"]),
+            ("[color:red]/20", vec!["[color:red]/20"]),
+            ("![color:red]/20", vec!["![color:red]/20"]),
+            ("[color:red]/20!", vec!["[color:red]/20!"]),
             // In HTML
             (
                 r#"<div class="flex items-center px-2.5 bg-[#0088cc] text-(--my-color)"></div>"#,
@@ -275,14 +271,14 @@ mod tests {
                 r#"[flex,[italic,[underline]]]"#,
                 vec!["flex", "italic", "underline"],
             ),
-            // (
-            //     r#"[:is(italic):is(underline)]"#,
-            //     vec!["italic", "underline"],
-            // ),
-            // (
-            //     r#"[:is(italic):is(underline)]:flex"#,
-            //     vec!["[:is(italic):is(underline)]:flex"],
-            // ),
+            (
+                r#"[:is(italic):is(underline)]"#,
+                vec!["italic", "underline"],
+            ),
+            (
+                r#"[:is(italic):is(underline)]:flex"#,
+                vec!["[:is(italic):is(underline)]:flex"],
+            ),
             // Clojure syntax. See: https://github.com/tailwindlabs/tailwindcss/issues/16189#issuecomment-2642438176
             (r#"[:div {:class ["p-2"]}"#, vec!["div", "class", "p-2"]),
             (
@@ -291,13 +287,26 @@ mod tests {
             ),
             (r#"[:div {:class ["p-2""#, vec!["div", "class", "p-2"]),
             (r#"               "text-green"]}"#, vec!["text-green"]),
-            // (r#"[:div.p-2]"#, vec!["div", "p-2"]),
+            (r#"[:div.p-2]"#, vec!["p-2"]),
+            // Longer example with mixed types of variants and utilities
+            (
+                "[&>[data-slot=icon]:last-child]:right-2.5",
+                vec!["[&>[data-slot=icon]:last-child]:right-2.5"],
+            ),
+            (
+                "sm:[&>[data-slot=icon]:last-child]:right-2.5",
+                vec!["sm:[&>[data-slot=icon]:last-child]:right-2.5"],
+            ),
             // --------------------------------------------------------
 
             // Exceptions:
             //
             // Keys inside of a JS object could be a variant-less candidate. Vue example.
-            // ("{ underline: true }", vec!["underline"]),
+            ("{ underline: true }", vec!["underline", "true"]),
+            (
+                r#"            <CheckIcon className={clsx('h-4 w-4', { invisible: index !== 0 })} />"#,
+                vec!["h-4", "w-4", "invisible", "index"],
+            ),
             // You can have variants but in a string. Vue example.
             (
                 "{ 'hover:underline': true }",
@@ -330,7 +339,8 @@ mod tests {
             ("bg-[red]-(--my-color)", vec!["red"]),
             ("bg-[red](--my-color)", vec!["red"]),
             // Important looking utility cannot be followed by another utility
-            // ("flex!block", vec![]),
+            // TODO:
+            //     ("flex!block", vec![]),
             // Invalid variants make the whole candidate invalid
             ("[foo]/bar:flex", vec!["foo"]),
         ] {

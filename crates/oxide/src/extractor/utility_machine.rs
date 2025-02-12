@@ -10,9 +10,6 @@ pub(crate) struct UtilityMachine {
     /// Start position of the utility
     start_pos: usize,
 
-    /// Ignore the characters until this specific position
-    skip_until_pos: Option<usize>,
-
     /// Current state of the machine
     state: State,
 
@@ -52,65 +49,41 @@ enum State {
 
 impl Machine for UtilityMachine {
     fn next(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
-        // Skipping characters until a specific position
-        match self.skip_until_pos {
-            Some(skip_until) if cursor.pos < skip_until => return MachineState::Parsing,
-            Some(_) => self.skip_until_pos = None,
-            None => {}
-        }
-
         match self.state {
             State::Idle => match (cursor.curr, cursor.next) {
                 // LEGACY: Important marker followed by the start of an arbitrary property.
                 //
                 // E.g.: `![color:red]`
                 //        ^
-                (b'!', b'[') => {
-                    self.start_pos = cursor.pos;
-                    self.state = State::ParsingArbitraryProperty;
-                    MachineState::Parsing
-                }
+                (b'!', b'[') => self.parse_arbitrary_property(cursor),
 
                 // Start of an arbitrary property
                 //
                 // E.g.: `[color:red]`
                 //        ^
                 (b'[', _) => {
-                    self.start_pos = cursor.pos;
                     self.arbitrary_property_machine.next(cursor);
-                    self.state = State::ParsingArbitraryProperty;
-                    MachineState::Parsing
+                    self.parse_arbitrary_property(cursor)
                 }
 
                 // Valid single character utility
                 //
                 // Must be followed by a space or the end of the input
                 (b'a'..=b'z', x) if x.is_ascii_whitespace() || cursor.at_end => {
-                    self.start_pos = cursor.pos;
-                    self.state = State::ParsingNamedUtility;
-                    self.next(cursor)
+                    self.parse_named(cursor)
                 }
 
                 // LEGACY: Important marker followed by valid start characters for a named utility
                 //
                 // E.g.: `!bg-red-500`
                 //        ^
-                (b'!', b'a'..=b'z' | b'@') => {
-                    self.start_pos = cursor.pos;
-                    self.state = State::ParsingNamedUtility;
-                    MachineState::Parsing
-                }
+                (b'!', b'a'..=b'z' | b'@') => self.parse_named(cursor),
 
                 // Valid start characters for a named utility
                 //
                 // E.g.: `bg-red-500`
                 //        ^
-                (b'-' | b'a'..=b'z', _) => {
-                    self.start_pos = cursor.pos;
-                    self.named_utility_machine.next(cursor);
-                    self.state = State::ParsingNamedUtility;
-                    MachineState::Parsing
-                }
+                (b'-' | b'a'..=b'z', _) => self.parse_named(cursor),
 
                 // Everything else, is not a valid start of a utility.
                 _ => MachineState::Idle,
@@ -140,33 +113,29 @@ impl Machine for UtilityMachine {
                 },
             },
 
-            State::ParsingArbitraryProperty => {
-                match self.arbitrary_property_machine.next(cursor) {
-                    MachineState::Idle => self.restart(),
-                    MachineState::Parsing => MachineState::Parsing,
-                    MachineState::Done(_) => {
-                        match cursor.next {
-                            // End of arbitrary property, but there is a potential modifier.
-                            //
-                            // E.g.: `[color:#0088cc]/`
-                            //                       ^
-                            b'/' => self.parse_modifier(),
+            State::ParsingArbitraryProperty => match self.arbitrary_property_machine.next(cursor) {
+                MachineState::Idle => self.restart(),
+                MachineState::Parsing => MachineState::Parsing,
+                MachineState::Done(_) => match cursor.next {
+                    // End of arbitrary property, but there is a potential modifier.
+                    //
+                    // E.g.: `[color:#0088cc]/`
+                    //                       ^
+                    b'/' => self.parse_modifier(),
 
-                            // End of arbitrary property, but there is an `!`.
-                            //
-                            // E.g.: `[color:#0088cc]!`
-                            //                       ^
-                            b'!' => self.parse_important(),
+                    // End of arbitrary property, but there is an `!`.
+                    //
+                    // E.g.: `[color:#0088cc]!`
+                    //                       ^
+                    b'!' => self.parse_important(),
 
-                            // End of arbitrary property
-                            //
-                            // E.g.: `[color:#0088cc]`
-                            //                      ^
-                            _ => self.done(self.start_pos, cursor),
-                        }
-                    }
-                }
-            }
+                    // End of arbitrary property
+                    //
+                    // E.g.: `[color:#0088cc]`
+                    //                      ^
+                    _ => self.done(self.start_pos, cursor),
+                },
+            },
 
             State::ParsingModifier => match self.modifier_machine.next(cursor) {
                 MachineState::Idle => self.restart(),
@@ -202,6 +171,21 @@ impl Machine for UtilityMachine {
 
 impl UtilityMachine {
     #[inline(always)]
+    fn parse_arbitrary_property(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
+        self.start_pos = cursor.pos;
+        self.state = State::ParsingArbitraryProperty;
+        MachineState::Parsing
+    }
+
+    #[inline(always)]
+    fn parse_named(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
+        self.start_pos = cursor.pos;
+        self.state = State::ParsingNamedUtility;
+
+        self.named_utility_machine.next(cursor)
+    }
+
+    #[inline(always)]
     fn parse_modifier(&mut self) -> MachineState {
         self.state = State::ParsingModifier;
         MachineState::Parsing
@@ -225,6 +209,8 @@ mod tests {
         for (input, expected) in [
             // Simple utility
             ("flex", vec!["flex"]),
+            // Single character utility
+            ("a", vec!["a"]),
             // Important utilities
             ("!flex", vec!["!flex"]),
             ("flex!", vec!["flex!"]),

@@ -117,8 +117,28 @@ impl Machine for CandidateMachine {
                     // variant, then the utility will be invalid anyway because it's not followed
                     // by `:`.
                     (MachineState::Parsing, MachineState::Done(_)) if cursor.next == b':' => {
-                        self.utility_machine.reset();
-                        MachineState::Parsing
+                        // There is an edge case where a utility followed by a `:` could be a valid
+                        // candidate _if_ there are no variants known so far.
+                        //
+                        // This can happen in JavaScript objects for example, E.g.:
+                        //
+                        // ```
+                        // { underline: true }
+                        //   ^^^^^^^^^
+                        // ```
+                        //
+                        // Unfortunately this means that we have to peek ahead again to see if
+                        // there is any whitespace.
+
+                        match (self.last_variant_end_pos, cursor.input.get(cursor.pos + 2)) {
+                            (None, Some(x)) if x.is_ascii_whitespace() => {
+                                self.done(self.start_pos, cursor)
+                            }
+                            _ => {
+                                self.utility_machine.reset();
+                                MachineState::Parsing
+                            }
+                        }
                     }
 
                     (MachineState::Parsing, state @ MachineState::Done(span)) => {
@@ -247,6 +267,18 @@ mod tests {
             ("[color:red]/20", vec!["[color:red]/20"]),
             ("![color:red]/20", vec!["![color:red]/20"]),
             ("[color:red]/20!", vec!["[color:red]/20!"]),
+            // With multiple variants
+            ("hover:focus:flex", vec!["hover:focus:flex"]),
+            // With complex variants
+            (
+                "[&>[data-slot=icon]:last-child]:right-2.5",
+                vec!["[&>[data-slot=icon]:last-child]:right-2.5"],
+            ),
+            // With multiple (complex) variants
+            (
+                "sm:[&>[data-slot=icon]:last-child]:right-2.5",
+                vec!["sm:[&>[data-slot=icon]:last-child]:right-2.5"],
+            ),
         ] {
             let mut machine = CandidateMachine::default();
             let mut cursor = Cursor::new(input.as_bytes());

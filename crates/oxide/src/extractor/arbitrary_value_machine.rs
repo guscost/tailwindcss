@@ -91,6 +91,7 @@ impl Machine for ArbitraryValueMachine {
                 }
 
                 // End of an arbitrary value
+                //
                 // 1. All brackets must be balanced
                 // 2. There must be at least a single character inside the brackets
                 b']' if self.bracket_stack.is_empty() && self.start_pos + 1 != cursor.pos => {
@@ -156,6 +157,10 @@ mod tests {
             ),
             // With nested brackets
             ("[[data-foo]]", vec!["[[data-foo]]"]),
+            (
+                "[&>[data-slot=icon]:last-child]",
+                vec!["[&>[data-slot=icon]:last-child]"],
+            ),
             // Spaces are not allowed
             ("[ #0088cc ]", vec![]),
             // Unbalanced brackets are not allowed

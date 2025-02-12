@@ -8,9 +8,6 @@ pub(crate) struct NamedUtilityMachine {
     /// Start position of the utility
     start_pos: usize,
 
-    /// Ignore the characters until this specific position
-    skip_until_pos: Option<usize>,
-
     /// Current state of the machine
     state: State,
 
@@ -39,33 +36,8 @@ enum State {
 
 impl Machine for NamedUtilityMachine {
     fn next(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
-        // Skipping characters until a specific position
-        match self.skip_until_pos {
-            Some(skip_until) if cursor.pos < skip_until => return MachineState::Parsing,
-            Some(_) => self.skip_until_pos = None,
-            None => {}
-        }
-
         match self.state {
             State::Idle => match (cursor.curr, cursor.next) {
-                // Utilities don't start with `--`
-                //
-                // E.g.: `--my-color`
-                //        ^^
-                (b'-', b'-') => self.restart(),
-
-                // Utilities don't start with `/`
-                //
-                // E.g.: `</div`
-                //         ^
-                (b'/', _) => self.restart(),
-
-                // Utilities don't start with `<`
-                //
-                // E.g.: `<div`
-                //        ^
-                (b'<', _) => self.restart(),
-
                 // Valid single character utility
                 //
                 // Must be followed by a space or the end of the input
@@ -75,8 +47,7 @@ impl Machine for NamedUtilityMachine {
                 // E.g.: `a`
                 //        ^
                 (b'a'..=b'z', x) if x.is_ascii_whitespace() || cursor.at_end => {
-                    self.start_pos = cursor.pos;
-                    self.done(self.start_pos, cursor)
+                    self.done(cursor.pos, cursor)
                 }
 
                 // Valid start characters
@@ -85,20 +56,14 @@ impl Machine for NamedUtilityMachine {
                 //        ^
                 // E.g.: `@container`
                 //        ^
-                (b'a'..=b'z' | b'@', _) => {
-                    self.start_pos = cursor.pos;
-                    self.parse()
-                }
+                (b'a'..=b'z' | b'@', _) => self.parse(cursor),
 
                 // Valid start of a negative utility, if followed by another set of valid
                 // characters. `@` as a second character is invalid.
                 //
                 // E.g.: `-mx-2.5`
                 //        ^^
-                (b'-', b'a'..=b'z' | b'A'..=b'Z') => {
-                    self.start_pos = cursor.pos;
-                    self.parse()
-                }
+                (b'-', b'a'..=b'z' | b'A'..=b'Z') => self.parse(cursor),
 
                 // Everything else, is not a valid start of the utility. But the next character
                 // might be a valid start for a new utility.
@@ -189,7 +154,9 @@ impl Machine for NamedUtilityMachine {
 
 impl NamedUtilityMachine {
     #[inline(always)]
-    fn parse(&mut self) -> MachineState {
+    fn parse(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
+        self.start_pos = cursor.pos;
+
         self.state = State::Parsing;
         MachineState::Parsing
     }

@@ -9,9 +9,6 @@ pub(crate) struct ModifierMachine {
     /// Start position of the modifier
     start_pos: usize,
 
-    /// Ignore the characters until this specific position
-    skip_until_pos: Option<usize>,
-
     /// Current state of the machine
     state: State,
 
@@ -51,13 +48,6 @@ enum State {
 
 impl Machine for ModifierMachine {
     fn next(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
-        // Skipping characters until a specific position
-        match self.skip_until_pos {
-            Some(skip_until) if cursor.pos < skip_until => return MachineState::Parsing,
-            Some(_) => self.skip_until_pos = None,
-            None => {}
-        }
-
         match self.state {
             State::Idle => match (cursor.curr, cursor.next) {
                 // Start of an arbitrary value
