@@ -51,4 +51,72 @@ pub(crate) trait Machine: Sized + Default {
         self.reset();
         MachineState::Done(Span::new(start, cursor.pos))
     }
+
+    #[cfg(test)]
+    fn test_throughput(iterations: usize, input: &str) {
+        use crate::throughput::Throughput;
+        use std::hint::black_box;
+
+        let input = input.as_bytes();
+        let len = input.len();
+
+        let throughput = Throughput::compute(iterations, len, || {
+            let mut machine = Self::default();
+            let mut cursor = cursor::Cursor::new(input);
+
+            for i in (0..len).step_by(4) {
+                cursor.move_to(i);
+                _ = black_box(machine.next(&cursor));
+
+                cursor.move_to(i);
+                _ = black_box(machine.next(&cursor));
+
+                cursor.move_to(i);
+                _ = black_box(machine.next(&cursor));
+
+                cursor.move_to(i);
+                _ = black_box(machine.next(&cursor));
+            }
+        });
+        eprintln!(
+            "{}: Throughput: {}",
+            std::any::type_name::<Self>(),
+            throughput
+        );
+    }
+
+    #[cfg(test)]
+    fn test_duration_once(input: &str) {
+        use std::hint::black_box;
+
+        let input = input.as_bytes();
+        let len = input.len();
+
+        let duration = {
+            let start = std::time::Instant::now();
+            let mut machine = Self::default();
+            let mut cursor = cursor::Cursor::new(input);
+
+            for i in (0..len).step_by(4) {
+                cursor.move_to(i);
+                _ = black_box(machine.next(&cursor));
+
+                cursor.move_to(i);
+                _ = black_box(machine.next(&cursor));
+
+                cursor.move_to(i);
+                _ = black_box(machine.next(&cursor));
+
+                cursor.move_to(i);
+                _ = black_box(machine.next(&cursor));
+            }
+
+            start.elapsed()
+        };
+        eprintln!(
+            "{}:   Duration: {:?}",
+            std::any::type_name::<Self>(),
+            duration
+        );
+    }
 }
