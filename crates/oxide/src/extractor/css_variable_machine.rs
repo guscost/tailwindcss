@@ -1,6 +1,51 @@
 use crate::cursor;
 use crate::extractor::machine::{Machine, MachineState};
 
+#[derive(Clone, Copy)]
+enum Class {
+    Dash,
+    AllowedCharacter,
+    Escape,
+    Whitespace,
+    End,
+    Other,
+}
+
+const fn generate_table() -> [Class; 256] {
+    let mut table = [Class::Other; 256];
+
+    macro_rules! set {
+        ($class:expr, $($byte:expr),+ $(,)?) => {
+            $(table[$byte as usize] = $class;)+
+        };
+    }
+
+    macro_rules! set_range {
+        ($class:expr, $start:literal ..= $end:literal) => {
+            let mut i = $start;
+            while i <= $end {
+                table[i as usize] = $class;
+                i += 1;
+            }
+        };
+    }
+
+    set!(Class::Dash, b'-');
+    set!(Class::Escape, b'\\');
+    set!(Class::Whitespace, b' ', b'\t', b'\n', b'\r', b'\x0C');
+
+    set!(Class::AllowedCharacter, b'_');
+    set_range!(Class::AllowedCharacter, b'a'..=b'z');
+    set_range!(Class::AllowedCharacter, b'A'..=b'Z');
+    set_range!(Class::AllowedCharacter, b'0'..=b'9');
+
+    set!(Class::End, 0x00);
+
+    table
+}
+
+const CLASS_TABLE: [Class; 256] = generate_table();
+
 #[derive(Debug, Default)]
 pub(crate) struct CssVariableMachine {
     /// Start position of the CSS variable
@@ -31,10 +76,13 @@ impl Machine for CssVariableMachine {
             None => {}
         }
 
+        let class_curr = CLASS_TABLE[cursor.curr as usize];
+        let class_next = CLASS_TABLE[cursor.next as usize];
+
         match self.state {
-            State::Idle => match (cursor.curr, cursor.next) {
+            State::Idle => match (class_curr, class_next) {
                 // Start of a CSS variable
-                (b'-', b'-') => {
+                (Class::Dash, Class::Dash) => {
                     self.start_pos = cursor.pos;
                     self.skip_until_pos = Some(cursor.pos + 2);
                     self.state = State::Parsing;
@@ -45,11 +93,11 @@ impl Machine for CssVariableMachine {
                 _ => MachineState::Idle,
             },
 
-            State::Parsing => match (cursor.curr, cursor.next) {
+            State::Parsing => match (class_curr, class_next) {
                 // https://drafts.csswg.org/css-syntax-3/#ident-token-diagram
                 //
                 // Valid character at the end of the input
-                (b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_', 0x00) => {
+                (Class::AllowedCharacter | Class::Dash, Class::End) => {
                     self.done(self.start_pos, cursor)
                 }
 
@@ -60,23 +108,21 @@ impl Machine for CssVariableMachine {
                 // E.g.: `--my-\#variable`
                 //            ^^
                 (
-                    b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_',
-                    b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'\\',
+                    Class::AllowedCharacter | Class::Dash,
+                    Class::AllowedCharacter | Class::Dash | Class::Escape,
                 ) => MachineState::Parsing,
 
                 // Valid character followed by an invalid character
-                (b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_', _) => {
-                    self.done(self.start_pos, cursor)
-                }
+                (Class::AllowedCharacter | Class::Dash, _) => self.done(self.start_pos, cursor),
 
                 // An escaped whitespace character is not allowed
                 //
                 // In CSS it is allowed, but in the context of a class it's not because then we
                 // would have spaces in the class. E.g.: `bg-(--my-\ color)`
-                (b'\\', x) if x.is_ascii_whitespace() => self.restart(),
+                (Class::Escape, Class::Whitespace) => self.restart(),
 
                 // An escaped character, skip ahead to the next character
-                (b'\\', _) if !cursor.at_end => {
+                (Class::Escape, _) if !cursor.at_end => {
                     self.skip_until_pos = Some(cursor.pos + 2);
                     MachineState::Parsing
                 }
@@ -93,6 +139,16 @@ mod tests {
     use super::CssVariableMachine;
     use crate::cursor::Cursor;
     use crate::extractor::machine::{Machine, MachineState};
+
+    #[test]
+    fn test_css_variable_performance() {
+        let input = "var(--my-variable) --other-variable var(--more-variables-here)".repeat(100);
+
+        CssVariableMachine::test_throughput(100_000, &input);
+        CssVariableMachine::test_duration_once(&input);
+
+        todo!()
+    }
 
     #[test]
     fn test_css_variable_extraction() {

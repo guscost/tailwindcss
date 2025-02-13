@@ -3,31 +3,24 @@ use crate::extractor::machine::{Machine, MachineState};
 
 #[derive(Clone, Copy)]
 enum Class {
-    SingleQuote,
-    DoubleQuote,
-    Backtick,
+    Quote,
     Escape,
     Whitespace,
-    End,
     Other,
 }
 
 const fn generate_table() -> [Class; 256] {
     let mut table = [Class::Other; 256];
 
-    table[b'"' as usize] = Class::DoubleQuote;
-    table[b'\'' as usize] = Class::SingleQuote;
-    table[b'`' as usize] = Class::Backtick;
+    macro_rules! set {
+        ($class:expr, $($byte:expr),+ $(,)?) => {
+            $(table[$byte as usize] = $class;)+
+        };
+    }
 
-    table[b'\\' as usize] = Class::Escape;
-
-    table[b' ' as usize] = Class::Whitespace;
-    table[b'\t' as usize] = Class::Whitespace;
-    table[b'\n' as usize] = Class::Whitespace;
-    table[b'\r' as usize] = Class::Whitespace;
-    table[b'\x0C' as usize] = Class::Whitespace;
-
-    table[b'\0' as usize] = Class::End;
+    set!(Class::Quote, b'"', b'\'', b'`');
+    set!(Class::Escape, b'\\');
+    set!(Class::Whitespace, b' ', b'\t', b'\n', b'\r', b'\x0C');
 
     table
 }
@@ -52,14 +45,7 @@ enum State {
     Idle,
 
     /// Parsing a string
-    Parsing(QuoteKind),
-}
-
-#[derive(Debug)]
-enum QuoteKind {
-    Single,
-    Double,
-    Backtick,
+    Parsing(u8),
 }
 
 impl Machine for StringMachine {
@@ -77,21 +63,9 @@ impl Machine for StringMachine {
         match self.state {
             State::Idle => match class_curr {
                 // Start of a string
-                Class::SingleQuote => {
+                Class::Quote => {
                     self.start_pos = cursor.pos;
-                    self.state = State::Parsing(QuoteKind::Single);
-                    MachineState::Parsing
-                }
-
-                Class::DoubleQuote => {
-                    self.start_pos = cursor.pos;
-                    self.state = State::Parsing(QuoteKind::Double);
-                    MachineState::Parsing
-                }
-
-                Class::Backtick => {
-                    self.start_pos = cursor.pos;
-                    self.state = State::Parsing(QuoteKind::Backtick);
+                    self.state = State::Parsing(cursor.curr);
                     MachineState::Parsing
                 }
 
@@ -99,7 +73,7 @@ impl Machine for StringMachine {
                 _ => MachineState::Idle,
             },
 
-            State::Parsing(QuoteKind::Single) => match (class_curr, class_next) {
+            State::Parsing(end) => match (class_curr, class_next) {
                 // An escaped whitespace character is not allowed
                 (Class::Escape, Class::Whitespace) => self.restart(),
 
@@ -110,47 +84,7 @@ impl Machine for StringMachine {
                 }
 
                 // End of the string
-                (Class::SingleQuote, _) => self.done(self.start_pos, cursor),
-
-                // Any kind of whitespace is not allowed
-                (Class::Whitespace, _) => self.restart(),
-
-                // Everything else is valid
-                _ => MachineState::Parsing,
-            },
-
-            State::Parsing(QuoteKind::Double) => match (class_curr, class_next) {
-                // An escaped whitespace character is not allowed
-                (Class::Escape, Class::Whitespace) => self.restart(),
-
-                // An escaped character, skip ahead to the next character
-                (Class::Escape, _) if !cursor.at_end => {
-                    self.skip_until_pos = Some(cursor.pos + 2);
-                    MachineState::Parsing
-                }
-
-                // End of the string
-                (Class::DoubleQuote, _) => self.done(self.start_pos, cursor),
-
-                // Any kind of whitespace is not allowed
-                (Class::Whitespace, _) => self.restart(),
-
-                // Everything else is valid
-                _ => MachineState::Parsing,
-            },
-
-            State::Parsing(QuoteKind::Backtick) => match (class_curr, class_next) {
-                // An escaped whitespace character is not allowed
-                (Class::Escape, Class::Whitespace) => self.restart(),
-
-                // An escaped character, skip ahead to the next character
-                (Class::Escape, _) if !cursor.at_end => {
-                    self.skip_until_pos = Some(cursor.pos + 2);
-                    MachineState::Parsing
-                }
-
-                // End of the string
-                (Class::Backtick, _) => self.done(self.start_pos, cursor),
+                (Class::Quote, _) if cursor.curr == end => self.done(self.start_pos, cursor),
 
                 // Any kind of whitespace is not allowed
                 (Class::Whitespace, _) => self.restart(),
@@ -164,40 +98,18 @@ impl Machine for StringMachine {
 
 #[cfg(test)]
 mod tests {
-
     use super::StringMachine;
     use crate::cursor::Cursor;
     use crate::extractor::machine::{Machine, MachineState};
-    use crate::throughput::Throughput;
-    use std::hint::black_box;
 
     #[test]
-    fn test_string_value_throughput() {
-        let iterations = 100_000;
+    fn test_string_value_performance() {
         let input = "There will be a 'string' in this input ".repeat(100);
-        let input = input.as_bytes();
-        let len = input.len();
 
-        let throughput = Throughput::compute(iterations, len, || {
-            let mut machine = StringMachine::default();
-            let mut cursor = Cursor::new(input);
+        StringMachine::test_throughput(100_000, &input);
+        StringMachine::test_duration_once(&input);
 
-            for i in (0..len).step_by(4) {
-                cursor.move_to(i);
-                _ = black_box(machine.next(&cursor));
-
-                cursor.move_to(i);
-                _ = black_box(machine.next(&cursor));
-
-                cursor.move_to(i);
-                _ = black_box(machine.next(&cursor));
-
-                cursor.move_to(i);
-                _ = black_box(machine.next(&cursor));
-            }
-        });
-        eprintln!("String value machine throughput: {:}", throughput);
-        assert!(false);
+        todo!()
     }
 
     #[test]
