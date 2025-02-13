@@ -2,6 +2,54 @@ use crate::cursor;
 use crate::extractor::machine::{Machine, MachineState};
 use crate::extractor::string_machine::StringMachine;
 
+#[derive(Clone, Copy)]
+enum Class {
+    Escape,
+
+    OpenParen,
+    CloseParen,
+
+    OpenBracket,
+    CloseBracket,
+
+    OpenCurly,
+    CloseCurly,
+
+    Quote,
+
+    Whitespace,
+    Other,
+}
+
+const fn generate_table() -> [Class; 256] {
+    let mut table = [Class::Other; 256];
+
+    macro_rules! set {
+        ($class:expr, $($byte:expr),+ $(,)?) => {
+            $(table[$byte as usize] = $class;)+
+        };
+    }
+
+    set!(Class::Escape, b'\\');
+
+    set!(Class::OpenParen, b'(');
+    set!(Class::CloseParen, b')');
+
+    set!(Class::OpenBracket, b'[');
+    set!(Class::CloseBracket, b']');
+
+    set!(Class::OpenCurly, b'{');
+    set!(Class::CloseCurly, b'}');
+
+    set!(Class::Quote, b'"', b'\'', b'`');
+
+    set!(Class::Whitespace, b' ', b'\t', b'\n', b'\r', b'\x0C');
+
+    table
+}
+
+const CLASS_TABLE: [Class; 256] = generate_table();
+
 #[derive(Debug, Default)]
 pub(crate) struct ArbitraryValueMachine {
     /// Start position of the arbitrary value
@@ -41,10 +89,13 @@ impl Machine for ArbitraryValueMachine {
             None => {}
         }
 
+        let class_curr = CLASS_TABLE[cursor.curr as usize];
+        let class_next = CLASS_TABLE[cursor.next as usize];
+
         match self.state {
-            State::Idle => match cursor.curr {
+            State::Idle => match class_curr {
                 // Start of an arbitrary value
-                b'[' => {
+                Class::OpenBracket => {
                     self.start_pos = cursor.pos;
                     self.parse()
                 }
@@ -53,32 +104,34 @@ impl Machine for ArbitraryValueMachine {
                 _ => MachineState::Idle,
             },
 
-            State::Parsing => match cursor.curr {
+            State::Parsing => match (class_curr, class_next) {
                 // An escaped character, skip ahead to the next character
-                b'\\' if !cursor.at_end => {
+                (Class::Escape, _) if !cursor.at_end => {
                     self.skip_until_pos = Some(cursor.pos + 2);
                     MachineState::Parsing
                 }
 
                 // An escaped whitespace character is not allowed
-                b'\\' if cursor.next.is_ascii_whitespace() => self.restart(),
+                (Class::Escape, Class::Whitespace) => self.restart(),
 
-                b'(' => {
+                (Class::OpenParen, _) => {
                     self.bracket_stack.push(b')');
                     MachineState::Parsing
                 }
 
-                b'[' => {
+                (Class::OpenBracket, _) => {
                     self.bracket_stack.push(b']');
                     MachineState::Parsing
                 }
 
-                b'{' => {
+                (Class::OpenCurly, _) => {
                     self.bracket_stack.push(b'}');
                     MachineState::Parsing
                 }
 
-                b')' | b']' | b'}' if !self.bracket_stack.is_empty() => {
+                (Class::CloseParen | Class::CloseBracket | Class::CloseCurly, _)
+                    if !self.bracket_stack.is_empty() =>
+                {
                     if let Some(&expected) = self.bracket_stack.last() {
                         if cursor.curr == expected {
                             self.bracket_stack.pop();
@@ -94,15 +147,17 @@ impl Machine for ArbitraryValueMachine {
                 //
                 // 1. All brackets must be balanced
                 // 2. There must be at least a single character inside the brackets
-                b']' if self.bracket_stack.is_empty() && self.start_pos + 1 != cursor.pos => {
+                (Class::CloseBracket, _)
+                    if self.bracket_stack.is_empty() && self.start_pos + 1 != cursor.pos =>
+                {
                     self.done(self.start_pos, cursor)
                 }
 
                 // Start of a string
-                b'"' | b'\'' | b'`' => self.parse_string(cursor),
+                (Class::Quote, _) => self.parse_string(cursor),
 
                 // Any kind of whitespace is not allowed
-                x if x.is_ascii_whitespace() => self.restart(),
+                (Class::Whitespace, _) => self.restart(),
 
                 // Everything else is valid
                 _ => MachineState::Parsing,
@@ -137,6 +192,16 @@ mod tests {
     use super::ArbitraryValueMachine;
     use crate::cursor::Cursor;
     use crate::extractor::machine::{Machine, MachineState};
+
+    #[test]
+    fn test_arbitrary_value_performance() {
+        let input = r#"<div class="[color:red] [[data-foo]] [url('https://tailwindcss.com')] [url(https://tailwindcss.com)]"></div>"#.repeat(100);
+
+        ArbitraryValueMachine::test_throughput(100_000, &input);
+        ArbitraryValueMachine::test_duration_once(&input);
+
+        todo!()
+    }
 
     #[test]
     fn test_arbitrary_value_extraction() {
