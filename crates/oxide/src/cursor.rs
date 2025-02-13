@@ -51,7 +51,7 @@ impl<'a> Cursor<'a> {
 
     pub fn move_to(&mut self, pos: usize) {
         let len = self.input.len();
-        let pos = pos.clamp(0, len);
+        let pos = pos.min(len);
 
         self.pos = pos;
         self.at_start = pos == 0;

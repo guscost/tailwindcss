@@ -482,15 +482,21 @@ fn parse_all_blobs(blobs: Vec<Vec<u8>>) -> Vec<String> {
         .par_iter()
         .flat_map(|blob| blob.par_split(|x| matches!(x, b'\n')))
         .map(|blob| {
-            crate::extractor::Extractor::new(blob)
-                .extract()
-                .into_iter()
-                .filter_map(|x| match x {
-                    Extracted::Candidate(bytes) => Some(bytes),
-                    // Extracted::CssVariable(bytes) => Some(bytes),
-                    _ => None,
-                })
-                .collect::<FxHashSet<_>>()
+            let mut candidates: FxHashSet<&[u8]> = Default::default();
+            candidates.reserve(100);
+
+            candidates.extend(
+                crate::extractor::Extractor::new(blob)
+                    .extract()
+                    .into_iter()
+                    .filter_map(|x| match x {
+                        Extracted::Candidate(bytes) => Some(bytes),
+                        // Extracted::CssVariable(bytes) => Some(bytes),
+                        _ => None,
+                    }),
+            );
+
+            candidates
         })
         // .map(|blob| Extractor::unique(blob, Default::default()))
         .reduce(Default::default, |mut a, b| {

@@ -2,6 +2,7 @@ use crate::cursor;
 use crate::extractor::machine::{Machine, MachineState};
 use crate::extractor::utility_machine::UtilityMachine;
 use crate::extractor::variant_machine::VariantMachine;
+use crate::extractor::Span;
 
 #[derive(Debug, Default)]
 pub(crate) struct CandidateMachine {
@@ -10,9 +11,6 @@ pub(crate) struct CandidateMachine {
 
     /// End position of the last variant
     last_variant_end_pos: Option<usize>,
-
-    /// Ignore the characters until this specific position
-    skip_until_pos: Option<usize>,
 
     /// Current state of the machine
     state: State,
@@ -35,17 +33,6 @@ enum State {
 
 impl Machine for CandidateMachine {
     fn next(&mut self, cursor: &cursor::Cursor<'_>) -> MachineState {
-        // Skipping characters until a specific position
-        match self.skip_until_pos {
-            Some(skip_until) if cursor.pos < skip_until => return MachineState::Parsing,
-            Some(_) => self.skip_until_pos = None,
-            None => {}
-        }
-
-        // let so_far = std::str::from_utf8(&cursor.input[self.start_pos..=cursor.pos]);
-        // dbg!(so_far);
-        // eprintln!("{}", &cursor);
-
         match self.state {
             State::Idle => match (cursor.curr, cursor.next) {
                 // Candidates don't start with `--`, skip ahead
@@ -73,7 +60,7 @@ impl Machine for CandidateMachine {
 
                     match (variant_machine_state, utility_machine_state) {
                         // Completed with a single character utility
-                        (_, state @ MachineState::Done(_)) => state,
+                        (_, MachineState::Done(span)) => self.done(span.start, cursor),
 
                         // At least one machine is parsing
                         (MachineState::Parsing, _) | (_, MachineState::Parsing) => {
@@ -145,18 +132,21 @@ impl Machine for CandidateMachine {
                         }
                     }
 
-                    (MachineState::Parsing, state @ MachineState::Done(span)) => {
+                    (MachineState::Parsing, MachineState::Done(span)) => {
+                        // MachineState::Parsing
                         // TODO: Ensure the variant is parsing but incomplete
                         //
                         match self.last_variant_end_pos {
                             // There's a variant, but the variant and utility are not touching.
-                            Some(end_pos) if end_pos + 1 > span.start => state,
+                            Some(end_pos) if end_pos + 1 > span.start => {
+                                self.done(span.start, cursor)
+                            }
 
                             // There's a variant, and the variant and utility are touching.
                             Some(_) => self.done(self.start_pos, cursor),
 
                             // There's no variant, and the utility is done.
-                            None => state,
+                            None => self.done(span.start, cursor),
                         }
                     }
 
@@ -193,16 +183,19 @@ impl Machine for CandidateMachine {
 
                     // Utility machine is done, and it's not going to be a variant. Candidate is
                     // guaranteed to not be followed by disallowed characters:
-                    (MachineState::Idle, state @ MachineState::Done(span)) => {
+                    (MachineState::Idle, MachineState::Done(span)) => {
                         match self.last_variant_end_pos {
                             // There's a variant, but the variant and utility are not touching.
-                            Some(end_pos) if end_pos + 1 > span.start => state,
+                            // Ignore the variant and complete with the utility only.
+                            Some(end_pos) if end_pos + 1 > span.start => {
+                                self.done(span.start, cursor)
+                            }
 
                             // There's a variant, and the variant and utility are touching.
                             Some(_) => self.done(self.start_pos, cursor),
 
                             // There's no variant, and the utility is done.
-                            None => state,
+                            None => self.done(span.start, cursor),
                         }
                     }
                 }
@@ -223,6 +216,12 @@ impl Machine for CandidateMachine {
                 MachineState::Idle
             }
         }
+    }
+
+    #[inline(always)]
+    fn done(&mut self, start: usize, cursor: &cursor::Cursor<'_>) -> MachineState {
+        self.resume_at_boundary();
+        MachineState::Done(Span::new(start, cursor.pos))
     }
 }
 

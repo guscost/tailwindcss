@@ -4,6 +4,7 @@ use candidate_machine::CandidateMachine;
 use css_variable_machine::CssVariableMachine;
 use machine::{Machine, MachineState};
 use std::fmt;
+use utility_machine::UtilityMachine;
 
 mod arbitrary_property_machine;
 mod arbitrary_value_machine;
@@ -54,6 +55,8 @@ impl fmt::Display for Extracted<'_> {
 pub struct Extractor<'a> {
     cursor: cursor::Cursor<'a>,
 
+    utility_machine: UtilityMachine,
+
     css_variable_machine: CssVariableMachine,
     candidate_machine: CandidateMachine,
     candidate_machines: Vec<CandidateMachine>,
@@ -63,6 +66,7 @@ impl<'a> Extractor<'a> {
     pub fn new(input: &'a [u8]) -> Self {
         Self {
             cursor: cursor::Cursor::new(input),
+            utility_machine: Default::default(),
             css_variable_machine: Default::default(),
             candidate_machine: Default::default(),
             candidate_machines: Default::default(),
@@ -107,15 +111,21 @@ impl<'a> Extractor<'a> {
             // The outer machine will complete because `has-[.italic]:flex` is a valid candidate with a
             // variant and a utility. The inner machine will find `italic`, but the inner machine will
             // be discarded because the outer machine found a solution.
-            {
-                for machine in &mut self.candidate_machines {
-                    if let MachineState::Done(span) = machine.next(&self.cursor) {
-                        in_flight_spans.push(span);
+            if true {
+                // Once we see whitespace, we know for sure that all the inner machines are
+                // invalid. We can discard them.
+                if self.cursor.curr.is_ascii_whitespace() {
+                    self.candidate_machines.clear();
+                } else {
+                    for machine in &mut self.candidate_machines {
+                        if let MachineState::Done(_span) = machine.next(&self.cursor) {
+                            // in_flight_spans.push(span);
+                        }
                     }
-                }
 
-                if self.cursor.curr == b'[' {
-                    self.candidate_machines.push(Default::default());
+                    if self.cursor.curr == b'[' {
+                        self.candidate_machines.push(Default::default());
+                    }
                 }
             }
 
@@ -125,10 +135,6 @@ impl<'a> Extractor<'a> {
 
             if let MachineState::Done(span) = self.css_variable_machine.next(&self.cursor) {
                 extracted.push(Extracted::CssVariable(span.slice(self.cursor.input)));
-            }
-
-            if self.candidate_machines.len() > 12 {
-                dbg!(self.candidate_machines.len());
             }
         }
 
@@ -180,7 +186,7 @@ mod tests {
         if true {
             let iterations = 100_000;
 
-            let input = "flex items-center justify-center rounded-full ";
+            let input = "flex items-center justify-center rounded-full ".repeat(100);
 
             let throughput = Throughput::compute(iterations, input.len(), || {
                 _ = black_box(parser::Extractor::all(input.as_bytes(), Default::default()));
@@ -202,7 +208,6 @@ mod tests {
                 .collect::<Vec<_>>();
             let end = start.elapsed();
             eprintln!("Time elapsed (new extractor): {:?}", end);
-            dbg!(new_extractor);
 
             assert!(false);
         }
@@ -339,8 +344,7 @@ mod tests {
             ("bg-[red]-(--my-color)", vec!["red"]),
             ("bg-[red](--my-color)", vec!["red"]),
             // Important looking utility cannot be followed by another utility
-            // TODO:
-            //     ("flex!block", vec![]),
+            ("flex!block", vec![]),
             // Invalid variants make the whole candidate invalid
             ("[foo]/bar:flex", vec!["foo"]),
         ] {
