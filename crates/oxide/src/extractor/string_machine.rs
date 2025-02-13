@@ -3,7 +3,9 @@ use crate::extractor::machine::{Machine, MachineState};
 
 #[derive(Clone, Copy)]
 enum Class {
-    Quote,
+    SingleQuote,
+    DoubleQuote,
+    Backtick,
     Escape,
     Whitespace,
     End,
@@ -13,9 +15,9 @@ enum Class {
 const fn generate_table() -> [Class; 256] {
     let mut table = [Class::Other; 256];
 
-    table[b'"' as usize] = Class::Quote;
-    table[b'\'' as usize] = Class::Quote;
-    table[b'`' as usize] = Class::Quote;
+    table[b'"' as usize] = Class::DoubleQuote;
+    table[b'\'' as usize] = Class::SingleQuote;
+    table[b'`' as usize] = Class::Backtick;
 
     table[b'\\' as usize] = Class::Escape;
 
@@ -50,7 +52,14 @@ enum State {
     Idle,
 
     /// Parsing a string
-    Parsing,
+    Parsing(QuoteKind),
+}
+
+#[derive(Debug)]
+enum QuoteKind {
+    Single,
+    Double,
+    Backtick,
 }
 
 impl Machine for StringMachine {
@@ -68,9 +77,21 @@ impl Machine for StringMachine {
         match self.state {
             State::Idle => match class_curr {
                 // Start of a string
-                Class::Quote => {
+                Class::SingleQuote => {
                     self.start_pos = cursor.pos;
-                    self.state = State::Parsing;
+                    self.state = State::Parsing(QuoteKind::Single);
+                    MachineState::Parsing
+                }
+
+                Class::DoubleQuote => {
+                    self.start_pos = cursor.pos;
+                    self.state = State::Parsing(QuoteKind::Double);
+                    MachineState::Parsing
+                }
+
+                Class::Backtick => {
+                    self.start_pos = cursor.pos;
+                    self.state = State::Parsing(QuoteKind::Backtick);
                     MachineState::Parsing
                 }
 
@@ -78,7 +99,7 @@ impl Machine for StringMachine {
                 _ => MachineState::Idle,
             },
 
-            State::Parsing => match (class_curr, class_next) {
+            State::Parsing(QuoteKind::Single) => match (class_curr, class_next) {
                 // An escaped whitespace character is not allowed
                 (Class::Escape, Class::Whitespace) => self.restart(),
 
@@ -89,7 +110,47 @@ impl Machine for StringMachine {
                 }
 
                 // End of the string
-                (Class::Quote, _) => self.done(self.start_pos, cursor),
+                (Class::SingleQuote, _) => self.done(self.start_pos, cursor),
+
+                // Any kind of whitespace is not allowed
+                (Class::Whitespace, _) => self.restart(),
+
+                // Everything else is valid
+                _ => MachineState::Parsing,
+            },
+
+            State::Parsing(QuoteKind::Double) => match (class_curr, class_next) {
+                // An escaped whitespace character is not allowed
+                (Class::Escape, Class::Whitespace) => self.restart(),
+
+                // An escaped character, skip ahead to the next character
+                (Class::Escape, _) if !cursor.at_end => {
+                    self.skip_until_pos = Some(cursor.pos + 2);
+                    MachineState::Parsing
+                }
+
+                // End of the string
+                (Class::DoubleQuote, _) => self.done(self.start_pos, cursor),
+
+                // Any kind of whitespace is not allowed
+                (Class::Whitespace, _) => self.restart(),
+
+                // Everything else is valid
+                _ => MachineState::Parsing,
+            },
+
+            State::Parsing(QuoteKind::Backtick) => match (class_curr, class_next) {
+                // An escaped whitespace character is not allowed
+                (Class::Escape, Class::Whitespace) => self.restart(),
+
+                // An escaped character, skip ahead to the next character
+                (Class::Escape, _) if !cursor.at_end => {
+                    self.skip_until_pos = Some(cursor.pos + 2);
+                    MachineState::Parsing
+                }
+
+                // End of the string
+                (Class::Backtick, _) => self.done(self.start_pos, cursor),
 
                 // Any kind of whitespace is not allowed
                 (Class::Whitespace, _) => self.restart(),
