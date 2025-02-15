@@ -1,12 +1,7 @@
 import * as tailwindcss from 'tailwindcss'
 import * as assets from './assets'
 import { Instrumentation } from './instrumentation'
-
-// Warn users about using the browser build in production as early as possible.
-// It can take time for the script to do its work so this must be at the top.
-console.warn(
-  'The browser build of Tailwind CSS should not be used in production. To use Tailwind CSS in production, use the Tailwind CLI, Vite plugin, or PostCSS plugin: https://tailwindcss.com/docs/installation',
-)
+import { tailwindcssAnimate } from './plugins'
 
 /**
  * The type used by `<style>` tags that contain input CSS.
@@ -172,7 +167,15 @@ async function loadStylesheet(id: string, base: string) {
   }
 }
 
-async function loadModule(): Promise<never> {
+async function loadModule(
+  id: string,
+  base: string,
+  resourceHint: 'plugin' | 'config',
+) {
+  if (resourceHint === "plugin" && id === "tailwindcss-animate") return {
+    module: tailwindcssAnimate,
+    base,
+  }
   throw new Error(`The browser build does not support plugins or config files.`)
 }
 
