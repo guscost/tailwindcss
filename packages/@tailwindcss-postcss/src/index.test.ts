@@ -90,7 +90,7 @@ test('@apply can be used without emitting the theme in the CSS file', async () =
 
   let result = await processor.process(
     css`
-      @import 'tailwindcss/theme.css' theme(reference);
+      @reference 'tailwindcss/theme.css';
       .foo {
         @apply text-red-500;
       }
@@ -100,7 +100,7 @@ test('@apply can be used without emitting the theme in the CSS file', async () =
 
   expect(result.css.trim()).toMatchInlineSnapshot(`
     ".foo {
-      color: var(--color-red-500);
+      color: var(--color-red-500, oklch(.637 .237 25.331));
     }"
   `)
 })
@@ -330,11 +330,7 @@ test('runs `Once` plugins in the right order', async () => {
   )
 
   expect(result.css.trim()).toMatchInlineSnapshot(`
-    ":root, :host {
-      --color-red-500: red;
-    }
-
-    .custom-css {
+    ".custom-css {
       color: red;
     }"
   `)
@@ -347,11 +343,7 @@ test('runs `Once` plugins in the right order', async () => {
     }"
   `)
   expect(after).toMatchInlineSnapshot(`
-    ":root, :host {
-      --color-red-500: red;
-    }
-
-    .custom-css {
+    ".custom-css {
       color: red;
     }"
   `)

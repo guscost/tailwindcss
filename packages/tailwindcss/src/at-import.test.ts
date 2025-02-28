@@ -421,7 +421,7 @@ test('supports theme(reference) imports', async () => {
     ),
   ).resolves.toMatchInlineSnapshot(`
     ".text-red-500 {
-      color: var(--color-red-500);
+      color: var(--color-red-500, red);
     }
     "
   `)
@@ -581,7 +581,7 @@ test('resolves @reference as `@import "…" reference`', async () => {
     ),
   ).resolves.toMatchInlineSnapshot(`
     ".text-red-500 {
-      color: var(--color-red-500);
+      color: var(--color-red-500, red);
     }
     "
   `)
