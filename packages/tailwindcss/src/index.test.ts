@@ -530,6 +530,41 @@ describe('@apply', () => {
       }"
     `)
   })
+
+  // https://github.com/tailwindlabs/tailwindcss/issues/16935
+  it('should now swallow @utility declarations when @apply is used in nested rules', async () => {
+    expect(
+      await compileCss(
+        css`
+          @tailwind utilities;
+
+          .ignore-me {
+            @apply underline;
+            div {
+              @apply custom-utility;
+            }
+          }
+
+          @utility custom-utility {
+            @apply flex;
+          }
+        `,
+        ['custom-utility'],
+      ),
+    ).toMatchInlineSnapshot(`
+      ".custom-utility {
+        display: flex;
+      }
+
+      .ignore-me {
+        text-decoration-line: underline;
+      }
+
+      .ignore-me div {
+        display: flex;
+      }"
+    `)
+  })
 })
 
 describe('arbitrary variants', () => {
@@ -1013,6 +1048,43 @@ describe('sorting', () => {
         .hover\\:flex:hover {
           display: flex;
         }
+      }"
+    `)
+  })
+
+  // https://github.com/tailwindlabs/tailwindcss/issues/16973
+  it('should not take undefined values into account when sorting', async () => {
+    expect(
+      await compileCss(
+        css`
+          @theme {
+            --text-sm: 0.875rem;
+            --text-sm--line-height: calc(1.25 / 0.875);
+          }
+          @tailwind utilities;
+          @utility fancy-text {
+            font-size: var(--text-4xl);
+            line-height: var(--text-4xl--line-height);
+            font-weight: var(--font-weight-bold);
+          }
+        `,
+        ['fancy-text', 'text-sm'],
+      ),
+    ).toMatchInlineSnapshot(`
+      ":root, :host {
+        --text-sm: .875rem;
+        --text-sm--line-height: calc(1.25 / .875);
+      }
+
+      .fancy-text {
+        font-size: var(--text-4xl);
+        line-height: var(--text-4xl--line-height);
+        font-weight: var(--font-weight-bold);
+      }
+
+      .text-sm {
+        font-size: var(--text-sm);
+        line-height: var(--tw-leading, var(--text-sm--line-height));
       }"
     `)
   })

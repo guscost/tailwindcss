@@ -11,15 +11,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - _Experimental_: Add `details-content` variant ([#15319](https://github.com/tailwindlabs/tailwindcss/pull/15319))
 - _Experimental_: Add `inverted-colors` variant ([#11693](https://github.com/tailwindlabs/tailwindcss/pull/11693))
-- _Experimental_: Add `scripting`, `scripting-none`, and `scripting-initial` variants ([#12128](https://github.com/tailwindlabs/tailwindcss/pull/12128))
+- _Experimental_: Add `scripting`, `scripting-none`, and `scripting-initial` variants ([#11929](https://github.com/tailwindlabs/tailwindcss/pull/11929))
+- _Experimental_: Add `pointer-none`, `pointer-coarse`, and `pointer-fine` variant ([#16946](https://github.com/tailwindlabs/tailwindcss/pull/16946))
+- _Experimental_: Add `any-pointer-none`, `any-pointer-coarse`, and `any-pointer-fine` variants ([#16941](https://github.com/tailwindlabs/tailwindcss/pull/16941))
 - _Experimental_: Add `user-valid` and `user-invalid` variants ([#12370](https://github.com/tailwindlabs/tailwindcss/pull/12370))
 - _Experimental_: Add `wrap-anywhere`, `wrap-break-word`, and `wrap-normal` utilities ([#12128](https://github.com/tailwindlabs/tailwindcss/pull/12128))
+
+### Fixed
+
+- Fix `haml` pre-processing ([#17051](https://github.com/tailwindlabs/tailwindcss/pull/17051))
+- Ensure classes between `>` and `<` are properly extracted ([#17094](https://github.com/tailwindlabs/tailwindcss/pull/17094))
+- Treat starting single quote as verbatim text in Slim ([#17085](https://github.com/tailwindlabs/tailwindcss/pull/17085))
+
+## [4.0.12] - 2025-03-07
+
+### Fixed
+
+- Vite: Fix `url(…)` rebasing in transitively imported CSS files ([#16965](https://github.com/tailwindlabs/tailwindcss/pull/16965))
+- PostCSS: Rebase `url(…)`s in imported CSS files ([#16965](https://github.com/tailwindlabs/tailwindcss/pull/16965))
+- Ensure utilities are sorted based on their actual property order ([#16995](https://github.com/tailwindlabs/tailwindcss/pull/16995))
+- Ensure strings in Pug and Slim templates are handled correctly ([#17000](https://github.com/tailwindlabs/tailwindcss/pull/17000))
+- Ensure classes between `}` and `{` are properly extracted ([#17001](https://github.com/tailwindlabs/tailwindcss/pull/17001))
+- Fix `razor`/`cshtml` pre-processing ([#17027](https://github.com/tailwindlabs/tailwindcss/pull/17027))
+- Ensure extracting candidates from JS embedded in a PHP string works as expected ([#17031](https://github.com/tailwindlabs/tailwindcss/pull/17031))
+
+## [4.0.11] - 2025-03-06
+
+### Fixed
+
+- Ensure classes containing `--` are extracted correctly ([#16972](https://github.com/tailwindlabs/tailwindcss/pull/16972))
+- Ensure classes containing numbers followed by dash or underscore are extracted correctly ([#16980](https://github.com/tailwindlabs/tailwindcss/pull/16980))
+- Ensure arbitrary container queries are extracted correctly ([#16984](https://github.com/tailwindlabs/tailwindcss/pull/16984))
+- Ensure classes ending in `[` are extracted in Slim templating language ([#16985](https://github.com/tailwindlabs/tailwindcss/pull/16985))
+- Ensure arbitrary variables with data types are extracted correctly ([#16986](https://github.com/tailwindlabs/tailwindcss/pull/16986))
+
+## [4.0.10] - 2025-03-05
+
+### Added
+
 - Add `col-<number>` and `row-<number>` utilities for `grid-column` and `grid-row` ([#15183](https://github.com/tailwindlabs/tailwindcss/pull/15183))
 
 ### Fixed
 
 - Ensure `not-*` does not remove `:is(…)` from variants ([#16825](https://github.com/tailwindlabs/tailwindcss/pull/16825))
-- Ensure `@keyframes` are correctly emitted when using a prefixed setup ([#16850](https://github.com/tailwindlabs/tailwindcss/pull/16850))
+- Ensure `@keyframes` are correctly emitted when using a prefix ([#16850](https://github.com/tailwindlabs/tailwindcss/pull/16850))
+- Don't swallow `@utility` declarations when `@apply` is used in nested rules ([#16940](https://github.com/tailwindlabs/tailwindcss/pull/16940))
+- Ensure `outline-hidden` behaves like `outline-none` outside of forced colors mode ([#16943](https://github.com/tailwindlabs/tailwindcss/pull/16943))
+- Allow `!important` on CSS variables again ([#16873](https://github.com/tailwindlabs/tailwindcss/pull/16873))
+- Vite: Do not crash when encountering an `.svg` file with `#` or `?` in the filename ([#16957](https://github.com/tailwindlabs/tailwindcss/pull/16957))
+- Ensure utilities are properly detected within square brackets ([#16306](https://github.com/tailwindlabs/tailwindcss/pull/16306))
+- Ensure utilities are properly detected using Angular's conditional class binding syntax ([#16306](https://github.com/tailwindlabs/tailwindcss/pull/16306))
+- Ensure utilities starting with numbers are properly extracted from Slim templates ([#16306](https://github.com/tailwindlabs/tailwindcss/pull/16306))
+- Discard arbitrary property candidates that have guaranteed-invalid property names ([#16306](https://github.com/tailwindlabs/tailwindcss/pull/16306))
+
+### Changed
+
+- Removed `max-w-auto` and `max-h-auto` utilities as they generate invalid CSS ([#16917](https://github.com/tailwindlabs/tailwindcss/pull/16917))
+- Replaced the existing candidate extractor with a brand new extractor to improve maintainability, correctness, and performance ([#16306](https://github.com/tailwindlabs/tailwindcss/pull/16306))
 
 ## [4.0.9] - 2025-02-25
 
@@ -3477,7 +3525,10 @@ No release notes
 
 - Everything!
 
-[unreleased]: https://github.com/tailwindlabs/tailwindcss/compare/v4.0.9...HEAD
+[unreleased]: https://github.com/tailwindlabs/tailwindcss/compare/v4.0.12...HEAD
+[4.0.12]: https://github.com/tailwindlabs/tailwindcss/compare/v4.0.11...v4.0.12
+[4.0.11]: https://github.com/tailwindlabs/tailwindcss/compare/v4.0.10...v4.0.11
+[4.0.10]: https://github.com/tailwindlabs/tailwindcss/compare/v4.0.9...v4.0.10
 [4.0.9]: https://github.com/tailwindlabs/tailwindcss/compare/v4.0.8...v4.0.9
 [4.0.8]: https://github.com/tailwindlabs/tailwindcss/compare/v4.0.7...v4.0.8
 [4.0.7]: https://github.com/tailwindlabs/tailwindcss/compare/v4.0.6...v4.0.7

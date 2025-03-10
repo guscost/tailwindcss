@@ -2738,8 +2738,8 @@ test('min-width', async () => {
         @tailwind utilities;
       `,
       [
-        'min-w-auto',
         'min-w-full',
+        'min-w-auto',
         'min-w-min',
         'min-w-max',
         'min-w-fit',
@@ -2813,16 +2813,7 @@ test('max-width', async () => {
         }
         @tailwind utilities;
       `,
-      [
-        'max-w-none',
-        'max-w-full',
-        'max-w-max',
-        'max-w-max',
-        'max-w-fit',
-        'max-w-4',
-        'max-w-xl',
-        'max-w-[4px]',
-      ],
+      ['max-w-none', 'max-w-full', 'max-w-max', 'max-w-fit', 'max-w-4', 'max-w-xl', 'max-w-[4px]'],
     ),
   ).toMatchInlineSnapshot(`
     ":root, :host {
@@ -2861,6 +2852,7 @@ test('max-width', async () => {
   expect(
     await run([
       'max-w',
+      'max-w-auto',
       '-max-w-4',
       '-max-w-[4px]',
       'max-w-none/foo',
@@ -2988,8 +2980,8 @@ test('min-height', async () => {
         @tailwind utilities;
       `,
       [
-        'min-h-auto',
         'min-h-full',
+        'min-h-auto',
         'min-h-screen',
         'min-h-svh',
         'min-h-lvh',
@@ -3145,6 +3137,7 @@ test('max-height', async () => {
   expect(
     await run([
       'max-h',
+      'max-h-auto',
       '-max-h-4',
       '-max-h-[4px]',
       'max-h-none/foo',
@@ -14623,6 +14616,7 @@ test('outline', async () => {
     }
 
     .outline-hidden {
+      --tw-outline-style: none;
       outline-style: none;
     }
 
@@ -15042,11 +15036,6 @@ test('text', async () => {
       --leading-snug: 1.375;
     }
 
-    .text-sm {
-      font-size: var(--text-sm);
-      line-height: var(--tw-leading, var(--text-sm--line-height));
-    }
-
     .text-\\[10px\\]\\/none {
       font-size: 10px;
       line-height: 1;
@@ -15075,6 +15064,11 @@ test('text', async () => {
     .text-\\[xx-large\\]\\/6 {
       font-size: xx-large;
       line-height: calc(var(--spacing) * 6);
+    }
+
+    .text-sm {
+      font-size: var(--text-sm);
+      line-height: var(--tw-leading, var(--text-sm--line-height));
     }
 
     .text-sm\\/6 {
@@ -16754,11 +16748,11 @@ describe('custom utilities', () => {
     expect(optimizeCss(compiled).trim()).toMatchInlineSnapshot(`
       "@layer utilities {
         .text-sm {
-          font-size: var(--text-sm, .875rem);
-          line-height: var(--tw-leading, var(--text-sm--line-height, 1.25rem));
           font-size: var(--text-sm, .8755rem);
           line-height: var(--text-sm--line-height, 1.255rem);
           text-rendering: optimizeLegibility;
+          font-size: var(--text-sm, .875rem);
+          line-height: var(--tw-leading, var(--text-sm--line-height, 1.25rem));
         }
       }"
     `)

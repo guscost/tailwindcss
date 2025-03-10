@@ -944,11 +944,13 @@ export function createUtilities(theme: Theme) {
       ['height', value],
     ])
     staticUtility(`w-${key}`, [['width', value]])
-    staticUtility(`min-w-${key}`, [['min-width', value]])
-    staticUtility(`max-w-${key}`, [['max-width', value]])
     staticUtility(`h-${key}`, [['height', value]])
+    staticUtility(`min-w-${key}`, [['min-width', value]])
     staticUtility(`min-h-${key}`, [['min-height', value]])
-    staticUtility(`max-h-${key}`, [['max-height', value]])
+    if (key !== 'auto') {
+      staticUtility(`max-w-${key}`, [['max-width', value]])
+      staticUtility(`max-h-${key}`, [['max-height', value]])
+    }
   }
 
   staticUtility(`w-screen`, [['width', '100vw']])
@@ -3901,6 +3903,7 @@ export function createUtilities(theme: Theme) {
 
     utilities.static('outline-hidden', () => {
       return [
+        decl('--tw-outline-style', 'none'),
         decl('outline-style', 'none'),
         atRule('@media', '(forced-colors: active)', [
           decl('outline', '2px solid transparent'),

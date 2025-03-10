@@ -304,7 +304,7 @@ function applyImportant(ast: AstNode[]): void {
       continue
     }
 
-    if (node.kind === 'declaration' && !(node.property[0] === '-' && node.property[1] === '-')) {
+    if (node.kind === 'declaration') {
       node.important = true
     } else if (node.kind === 'rule' || node.kind === 'at-rule') {
       applyImportant(node.nodes)
@@ -326,7 +326,9 @@ function getPropertySort(nodes: AstNode[]) {
     let node = q.shift()!
     if (node.kind === 'declaration') {
       // Empty strings should still be counted, e.g.: `--tw-foo:;` is valid
-      if (node.value !== undefined) count++
+      if (node.value === undefined) continue
+
+      count++
 
       if (seenTwSort) continue
 

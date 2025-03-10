@@ -1,6 +1,6 @@
 {
   "name": "@tailwindcss/browser",
-  "version": "4.0.9",
+  "version": "4.0.12",
   "description": "A utility-first CSS framework for rapidly building custom user interfaces.",
   "license": "MIT",
   "main": "./dist/index.global.js",
@@ -30,7 +30,7 @@
     "access": "public"
   },
   "devDependencies": {
-    "h3": "^1.15.0",
+    "h3": "^1.15.1",
     "listhen": "^1.9.0",
     "tailwindcss": "workspace:*"
   }
